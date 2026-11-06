@@ -6,6 +6,8 @@ heading and uses it for the GitHub release notes.
 
 ## Unreleased
 
+## v0.1.0 (2026-11-06)
+
 First standalone release, after the bridge moved out of haxlib into its own repo.
 
 - **Drop-in tox**: everything the bridge needs (route code, dashboard, agent docs, init prompt) is
