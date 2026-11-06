@@ -1,0 +1,20 @@
+# TouchDesigner
+td-http-api.*.toe
+Backup/
+CrashAutoSave*
+*.dmp
+
+# Scratch scripts for /run (see CLAUDE.md) and local tooling
+tmp/
+__pycache__/
+.venv/
+
+# Local reference only: Derivative's TDMCP source, exported for comparison (not ours to publish)
+reference/tdmcp_dump/
+
+# Per-machine TouchDesigner plugin allow-list
+Plugins.json
+
+# Release output (attached to GitHub releases, not committed)
+build/
+

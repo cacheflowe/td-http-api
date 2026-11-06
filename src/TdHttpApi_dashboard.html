@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TD Bridge</title>
+<style>
+:root {
+	--bg: #f4f5f7; --panel: #ffffff; --panel-2: #eef0f3; --text: #1b1e23; --muted: #667080;
+	--line: #d9dde3; --accent: #e8900f; --accent-soft: #fdf0dc; --read: #7a8494; --write: #c97a06;
+	--ok: #1f8f4e; --err: #c8372d; --err-soft: #fbe7e5; --mcp: #6c4fd1; --curl: #2f6fb5; --link: #2563c9;
+	--mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bg: #15171b; --panel: #1d2026; --panel-2: #252931; --text: #e6e8ec; --muted: #8e97a6;
+		--line: #2f343d; --accent: #f0a133; --accent-soft: #3a2c16; --read: #8e97a6; --write: #f0a133;
+		--ok: #4cc27f; --err: #ff6b5e; --err-soft: #3b1f1d; --mcp: #a48cff; --curl: #6fa8ec; --link: #7fb0ff;
+	}
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 14px; padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.robot { font-size: 34px; line-height: 1; }
+.title h1 { margin: 0; font-size: 18px; }
+.title .sub { color: var(--muted); font-size: 13px; }
+.live { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); margin-left: auto; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+.dot.down { background: var(--err); box-shadow: 0 0 0 3px color-mix(in srgb, var(--err) 25%, transparent); }
+.siblings { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; font-size: 12px; color: var(--muted); }
+.siblings:empty { display: none; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); font-size: 12px; color: var(--text); text-decoration: none; }
+a.chip:hover, button.chip:hover { border-color: var(--accent); }
+nav { display: flex; gap: 4px; padding: 0 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
+nav button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 12px; color: var(--muted); font: inherit; cursor: pointer; }
+nav button.on { color: var(--text); border-bottom-color: var(--accent); }
+main { max-width: 1180px; margin: 0 auto; padding: 18px 20px 60px; }
+section[hidden] { display: none; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+.stat .n { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat .l { color: var(--muted); font-size: 12px; }
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { background: var(--panel); border: 0; padding: 6px 12px; font: inherit; color: var(--muted); cursor: pointer; }
+.seg button.on { background: var(--accent-soft); color: var(--text); }
+input[type=search] { flex: 1; min-width: 180px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit; }
+.btn { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit; cursor: pointer; }
+.btn:hover { border-color: var(--accent); }
+.feed { display: flex; flex-direction: column; gap: 6px; }
+.row { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--read); border-radius: 8px; padding: 8px 12px; }
+.row.write { border-left-color: var(--write); }
+.row.error { border-left-color: var(--err); background: linear-gradient(90deg, var(--err-soft), var(--panel) 40%); }
+.row.fresh { animation: fresh 1.2s ease-out; }
+@keyframes fresh { from { box-shadow: 0 0 0 3px var(--accent); } to { box-shadow: 0 0 0 0 transparent; } }
+.line1 { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; cursor: pointer; }
+.time { color: var(--muted); font: 12px var(--mono); font-variant-numeric: tabular-nums; }
+.src { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); }
+.src.mcp { color: var(--mcp); border-color: color-mix(in srgb, var(--mcp) 40%, transparent); }
+.src.curl { color: var(--curl); border-color: color-mix(in srgb, var(--curl) 40%, transparent); }
+.route { font: 600 13px var(--mono); }
+.method { font: 11px var(--mono); color: var(--muted); }
+.args { color: var(--muted); font: 12px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 120px; }
+.status { font: 12px var(--mono); }
+.status.ok { color: var(--ok); }
+.status.bad { color: var(--err); }
+.ms { color: var(--muted); font: 12px var(--mono); min-width: 54px; text-align: right; }
+.line2 { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; align-items: center; font-size: 12px; }
+.line2:empty { display: none; }
+.undo { color: var(--muted); }
+.err { color: var(--err); font-size: 12.5px; margin-top: 4px; }
+button.chip { cursor: pointer; font: 12px var(--mono); }
+.details { margin-top: 8px; display: none; }
+.row.open .details { display: block; }
+pre { margin: 0; background: var(--panel-2); border-radius: 6px; padding: 10px; font: 12px/1.4 var(--mono); overflow: auto; max-height: 320px; white-space: pre-wrap; word-break: break-word; }
+.preview { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
+.preview img { max-width: 200px; border-radius: 6px; border: 1px solid var(--line); background: repeating-conic-gradient(#8882 0 25%, transparent 0 50%) 50% / 16px 16px; }
+.empty { text-align: center; color: var(--muted); padding: 50px 10px; border: 1px dashed var(--line); border-radius: 10px; }
+.empty code { font-family: var(--mono); background: var(--panel-2); padding: 2px 6px; border-radius: 4px; }
+/* How it works */
+.flow { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; margin: 6px 0 22px; }
+.step { flex: 1 1 150px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; position: relative; }
+.step h3 { margin: 0 0 4px; font-size: 14px; }
+.step p { margin: 0; color: var(--muted); font-size: 12.5px; }
+.step .k { font-size: 20px; }
+.arrow { align-self: center; color: var(--muted); padding: 0 6px; font-size: 18px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+.card h3 { margin: 0 0 6px; font-size: 14px; }
+.card p, .card li { color: var(--muted); font-size: 13px; }
+.card ul { margin: 0; padding-left: 18px; }
+.card code, .routes code { font-family: var(--mono); font-size: 12px; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; color: var(--text); }
+/* Routes */
+.routes { display: flex; flex-direction: column; gap: 6px; }
+.r { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; display: grid; grid-template-columns: 210px 120px 1fr; gap: 10px; align-items: baseline; }
+.r .u { font: 600 13px var(--mono); }
+.r .m { font: 11px var(--mono); color: var(--muted); }
+.r .s { color: var(--muted); font-size: 13px; }
+.r.w .m { color: var(--write); }
+.r { grid-template-columns: 210px 120px 1fr auto; }
+.rwrap { display: flex; flex-direction: column; }
+.btn.tiny { padding: 2px 10px; font-size: 12px; }
+.try { background: var(--panel); border: 1px solid var(--line); border-top: 0; border-radius: 0 0 8px 8px; margin-top: -4px; padding: 12px; }
+.try[hidden] { display: none; }
+.fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; margin-bottom: 8px; }
+.fld { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+.fld span { font-family: var(--mono); }
+.fld input { padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); font: 13px var(--mono); }
+.fld.wide { margin-bottom: 8px; }
+.tryactions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+.btn.send { border-color: var(--accent); background: var(--accent-soft); }
+.result .meta { font-size: 12px; color: var(--muted); margin: 6px 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.result code.curl { display: block; font: 12px var(--mono); color: var(--muted); margin-bottom: 6px; overflow-wrap: anywhere; }
+.result pre.big { max-height: 520px; }
+.result img.shot { max-width: 100%; max-height: 420px; margin: 6px 6px 0 0; border-radius: 6px; border: 1px solid var(--line); background: repeating-conic-gradient(#8882 0 25%, transparent 0 50%) 50% / 16px 16px; }
+.row, .line1 > *, .err, .card, .step { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 720px) {
+	main { padding: 12px 16px 40px; }
+	header, nav { padding-left: 16px; padding-right: 16px; }
+	.r { grid-template-columns: 1fr; gap: 2px; }
+	.arrow { display: none; }
+	.ms { min-width: 0; }
+	.stats { grid-template-columns: repeat(2, 1fr); }
+	.args { flex-basis: 100%; white-space: normal; }
+	input[type=search] { min-width: 0; flex-basis: 100%; }
+}
+</style>
+</head>
+<body>
+<header>
+	<div class="robot" aria-hidden="true">🤖</div>
+	<div class="title">
+		<h1 id="label">TD Bridge</h1>
+		<div class="sub" id="sub">connecting…</div>
+	</div>
+	<div class="live"><span class="dot" id="dot"></span><span id="liveText">live</span></div>
+	<div class="siblings" id="siblings"></div>
+</header>
+<nav>
+	<button class="on" data-tab="activity">Activity</button>
+	<button data-tab="how">How it works</button>
+	<button data-tab="routes">Routes</button>
+</nav>
+<main>
+	<section id="activity">
+		<div class="stats">
+			<div class="stat"><div class="n" id="sCalls">0</div><div class="l">calls this session</div></div>
+			<div class="stat"><div class="n" id="sWrites">0</div><div class="l">changes (each one undoable)</div></div>
+			<div class="stat"><div class="n" id="sErrors">0</div><div class="l">errors</div></div>
+			<div class="stat"><div class="n" id="sLast">–</div><div class="l">last activity</div></div>
+		</div>
+		<div class="toolbar">
+			<div class="seg" id="filter">
+				<button class="on" data-f="all">All</button>
+				<button data-f="write">Changes</button>
+				<button data-f="error">Errors</button>
+			</div>
+			<input type="search" id="q" placeholder="Filter by route, node path, error…">
+			<button class="btn" id="pause">Pause</button>
+			<button class="btn" id="clear" title="Hide everything so far (the bridge keeps its log)">Clear view</button>
+		</div>
+		<div class="feed" id="feed"></div>
+	</section>
+
+	<section id="how" hidden>
+		<div class="flow">
+			<div class="step"><div class="k">🧑‍💻</div><h3>Agent</h3><p>Claude, Copilot or a script calls the bridge with <b>curl</b> (HTTP) or as <b>MCP tools</b> at <code>/mcp</code>.</p></div>
+			<div class="arrow">→</div>
+			<div class="step"><div class="k">🛡️</div><h3>Gate</h3><p>Only this machine. Browser pages from other sites are refused, so a website can't run Python in TD.</p></div>
+			<div class="arrow">→</div>
+			<div class="step"><div class="k">🧭</div><h3>Route</h3><p>One small Python function per route. Mistakes come back as JSON with a <code>code</code> and suggestions.</p></div>
+			<div class="arrow">→</div>
+			<div class="step"><div class="k">↩️</div><h3>Undo step</h3><p>Every change is one named undo entry ("Agent /par …"), so Ctrl+Z in TD reverts it.</p></div>
+			<div class="arrow">→</div>
+			<div class="step"><div class="k">✨</div><h3>TouchDesigner</h3><p>The change happens on TD's main thread. Changed nodes flash amber so you can see them.</p></div>
+		</div>
+		<div class="cards">
+			<div class="card"><h3>Where it lives</h3><p>A Web Server DAT inside the <code>TdHttpApi</code> COMP. All route code is one Python file (<code>td_http_api.py</code>), embedded in the .tox, so it drops into any project.</p></div>
+			<div class="card"><h3>Looking</h3><ul><li><code>/network</code> structure, wires and references</li><li><code>/snapshot</code> any node as an image, <code>/sample</code> pixel numbers</li><li><code>/errors</code> with GLSL compile logs</li><li><code>/par</code>, <code>/opinfo</code> real parameter names</li></ul></div>
+			<div class="card"><h3>Changing</h3><ul><li><code>/build</code> many nodes, params and wires in one call</li><li><code>/par</code> one or many parameters</li><li><code>/dat?mode=edit</code> exact text edits</li><li><code>/run</code> any Python, as a last resort</li></ul></div>
+			<div class="card"><h3>Several apps</h3><p>Each TD app with this bridge takes the next free port from 3031 to 3040. The bar at the top shows the others it can find; give each one an <b>App Label</b> on the COMP.</p></div>
+			<div class="card"><h3>Long jobs</h3><p>Things that take several frames (non-TOP snapshots, frame grids, CHOP recordings) run in the background and are collected with <code>/job</code>, so TD never freezes.</p></div>
+			<div class="card"><h3>This page</h3><p>Served by the bridge at <code>/ui</code>. It polls <code>/logs</code> once a second; its own requests aren't logged. Click a node path in the feed to select it in TD.</p></div>
+		</div>
+	</section>
+
+	<section id="routes" hidden>
+		<div class="toolbar"><input type="search" id="rq" placeholder="Filter routes…"></div>
+		<div class="routes" id="routeList"><div class="empty">Loading routes…</div></div>
+	</section>
+</main>
+
+<script>
+(() => {
+	const HDR = { 'X-TD-Client': 'dashboard' };
+	const $ = (id) => document.getElementById(id);
+	const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+	const WRITE_ROUTES = new Set(['/par', '/dat', '/create', '/wire', '/insert', '/duplicate', '/comment',
+		'/bypass', '/flag', '/annotate', '/move', '/layout', '/delete', '/run', '/pulse', '/custompars', '/build', '/save',
+		'/save-external-tox', '/export-release', '/select', '/reload']);
+
+	let entries = [];		// oldest first
+	let lastId = 0, epoch = null, paused = false, filter = 'all', query = '', clearedAt = 0;
+	let selfPort = Number(location.port) || 3031;
+
+	// ---------- server identity + sibling bridges ----------
+	async function loadInfo() {
+		try {
+			const r = await fetch('/server-info', { headers: HDR });
+			const info = await r.json();
+			$('label').textContent = info.label || 'TD Bridge';
+			$('sub').textContent = `${info.project} · port ${info.port} · TD ${info.build}`;
+			document.title = `${info.label} · TD Bridge`;
+			selfPort = info.port;
+			scanSiblings(info.portRange || [3031, 3040]);
+		} catch (e) { /* the poll loop reports connection state */ }
+	}
+
+	async function scanSiblings(range) {
+		const found = [];
+		await Promise.all(Array.from({ length: range[1] - range[0] + 1 }, (_, i) => range[0] + i)
+			.filter((p) => p !== selfPort)
+			.map(async (p) => {
+				const ctl = new AbortController();
+				const t = setTimeout(() => ctl.abort(), 700);
+				try {
+					const r = await fetch(`http://127.0.0.1:${p}/server-info`, { signal: ctl.signal });
+					const info = await r.json();
+					found.push({ port: p, label: info.label || info.project });
+				} catch (e) { /* nothing on that port */ }
+				clearTimeout(t);
+			}));
+		found.sort((a, b) => a.port - b.port);
+		$('siblings').innerHTML = found.length
+			? 'Other TD apps: ' + found.map((s) => `<a class="chip" href="http://127.0.0.1:${s.port}/ui">${esc(s.label)} :${s.port}</a>`).join('')
+			: '';
+	}
+
+	// ---------- activity feed ----------
+	const isError = (e) => (e.statusCode || 0) >= 400;
+	const isWrite = (e) => WRITE_ROUTES.has(e.uri) && e.method !== 'GET' && !isError(e);
+	const sourceOf = (e) => e.source || 'unknown';
+
+	function argsText(e) {
+		const a = e.args || {};
+		const keys = Object.keys(a);
+		if (!keys.length) return e.dataLen ? `body ${e.dataLen} chars` : '';
+		return keys.map((k) => `${k}=${a[k]}`).join('  ');
+	}
+
+	function matches(e) {
+		if (e.id <= clearedAt) return false;
+		if (filter === 'write' && !isWrite(e)) return false;
+		if (filter === 'error' && !isError(e)) return false;
+		if (!query) return true;
+		const hay = [e.uri, e.tool, e.source, argsText(e), e.code, e.error, e.undo, ...(e.touched || [])].join(' ').toLowerCase();
+		return hay.includes(query);
+	}
+
+	function rowHtml(e, fresh) {
+		const cls = ['row', isError(e) ? 'error' : isWrite(e) ? 'write' : '', fresh ? 'fresh' : ''].join(' ');
+		const status = isError(e)
+			? `<span class="status bad">${e.statusCode}${e.code ? ' ' + esc(e.code) : ''}</span>`
+			: `<span class="status ok">${e.statusCode}</span>`;
+		const touched = (e.touched || []).map((p) => `<button class="chip" data-select="${esc(p)}" title="Select in TouchDesigner">${esc(p)}</button>`).join('');
+		const extra = [
+			touched,
+			e.undo ? `<span class="undo">↩ ${esc(e.undo)}</span>` : '',
+		].join('');
+		return `<div class="${cls}" data-id="${e.id}">
+			<div class="line1">
+				<span class="time">${esc(e.time)}</span>
+				<span class="src ${esc(sourceOf(e))}">${esc(sourceOf(e))}</span>
+				<span class="method">${esc(e.method || '')}</span>
+				<span class="route">${esc(e.uri)}</span>
+				<span class="args" title="${esc(argsText(e))}">${esc(argsText(e))}</span>
+				${status}
+				<span class="ms">${e.callbackElapsedMs != null ? e.callbackElapsedMs.toFixed(1) + ' ms' : ''}</span>
+			</div>
+			${extra.trim() ? `<div class="line2">${extra}</div>` : ''}
+			${e.error ? `<div class="err">${esc(e.error)}${(e.suggestions || []).length ? ` <span class="undo">— did you mean ${e.suggestions.slice(0, 3).map((s) => `<code>${esc(s)}</code>`).join(', ')}?</span>` : ''}</div>` : ''}
+			<div class="details">
+				${(e.touched || []).length ? `<div class="preview" data-preview="${esc(JSON.stringify(e.touched.slice(0, 4)))}"></div>` : ''}
+				<pre>${esc(JSON.stringify(e, null, 2))}</pre>
+			</div>
+		</div>`;
+	}
+
+	let renderedIds = new Set();
+	function render(newIds) {
+		const list = entries.filter(matches).slice().reverse();
+		const feed = $('feed');
+		if (!list.length) {
+			feed.innerHTML = entries.length && clearedAt
+				? '<div class="empty">Nothing new since you cleared the view.</div>'
+				: `<div class="empty">No agent activity yet.<br><br>Try <code>curl -s http://127.0.0.1:${selfPort}/network</code>, or ask your agent to look at the project.</div>`;
+		} else {
+			const open = new Set([...feed.querySelectorAll('.row.open')].map((r) => r.dataset.id));
+			feed.innerHTML = list.slice(0, 300).map((e) => rowHtml(e, newIds && newIds.has(e.id))).join('');
+			open.forEach((id) => { const r = feed.querySelector(`.row[data-id="${id}"]`); if (r) r.classList.add('open'); });
+		}
+		const all = entries.filter((e) => e.id > clearedAt);
+		$('sCalls').textContent = all.length;
+		$('sWrites').textContent = all.filter(isWrite).length;
+		$('sErrors').textContent = all.filter(isError).length;
+		updateLast();
+	}
+
+	function updateLast() {
+		const last = entries[entries.length - 1];
+		if (!last || !last.ts) { $('sLast').textContent = '–'; return; }
+		const s = Math.max(0, Math.round(Date.now() / 1000 - last.ts));
+		$('sLast').textContent = s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : `${Math.floor(s / 3600)}h ago`;
+	}
+
+	async function poll() {
+		if (paused || document.hidden) return;
+		try {
+			const r = await fetch(`/logs?format=feed&limit=300&since=${lastId}`, { headers: HDR });
+			const data = await r.json();
+			if (epoch !== null && data.epoch !== epoch) {	// bridge code reloaded: ids restarted
+				entries = []; lastId = 0; clearedAt = 0;
+			}
+			epoch = data.epoch;
+			const fresh = data.entries.filter((e) => e.id > lastId);
+			if (fresh.length) {
+				entries = entries.concat(fresh).slice(-600);
+				lastId = fresh[fresh.length - 1].id;
+				render(new Set(fresh.map((e) => e.id)));
+			} else {
+				updateLast();
+			}
+			$('dot').classList.remove('down');
+			$('liveText').textContent = 'live';
+		} catch (e) {
+			$('dot').classList.add('down');
+			$('liveText').textContent = 'TD not responding';
+		}
+	}
+
+	// ---------- interactions ----------
+	$('feed').addEventListener('click', async (ev) => {
+		const sel = ev.target.closest('[data-select]');
+		if (sel) {
+			ev.stopPropagation();
+			await fetch(`/select?paths=${encodeURIComponent(sel.dataset.select)}&home=true`, { method: 'POST', headers: HDR, body: '' });
+			return;
+		}
+		const row = ev.target.closest('.row');
+		if (!row || !ev.target.closest('.line1')) return;
+		row.classList.toggle('open');
+		const pv = row.querySelector('[data-preview]');
+		if (row.classList.contains('open') && pv && !pv.dataset.loaded) {
+			pv.dataset.loaded = '1';
+			for (const path of JSON.parse(pv.dataset.preview)) {
+				try {
+					const r = await fetch(`/snapshot?path=${encodeURIComponent(path)}&size=200`, { headers: HDR });
+					if (!(r.headers.get('content-type') || '').startsWith('image/')) continue;	// non-TOPs answer with a job
+					const img = document.createElement('img');
+					img.src = URL.createObjectURL(await r.blob());
+					img.title = path;
+					pv.appendChild(img);
+				} catch (e) { /* preview is best-effort */ }
+			}
+		}
+	});
+
+	$('filter').addEventListener('click', (ev) => {
+		const b = ev.target.closest('button'); if (!b) return;
+		filter = b.dataset.f;
+		$('filter').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+		render();
+	});
+	$('q').addEventListener('input', (ev) => { query = ev.target.value.trim().toLowerCase(); render(); });
+	$('pause').addEventListener('click', (ev) => { paused = !paused; ev.target.textContent = paused ? 'Resume' : 'Pause'; });
+	$('clear').addEventListener('click', () => { clearedAt = lastId; render(); });
+
+	function showTab(tab) {
+		document.querySelectorAll('nav button').forEach((x) => x.classList.toggle('on', x.dataset.tab === tab));
+		document.querySelectorAll('main > section').forEach((s) => { s.hidden = s.id !== tab; });
+		if (tab === 'routes') loadRoutes();
+	}
+	document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => {
+		history.replaceState(null, '', '#' + b.dataset.tab);
+		showTab(b.dataset.tab);
+	}));
+
+	// ---------- route reference (live from /schema) ----------
+	let routes = null;
+	// GET routes that still change something (or are this page) don't get a Try button.
+	const NO_TRY = new Set(['/reload', '/ui', '/mcp']);
+	const canTry = (u, r) => r.methods.includes('GET') && !NO_TRY.has(u);
+
+	async function loadRoutes() {
+		if (routes) return;
+		try {
+			const r = await fetch('/schema?examples=true', { headers: HDR });
+			routes = Object.entries((await r.json()).routes);
+			drawRoutes();
+		} catch (e) { $('routeList').innerHTML = '<div class="empty">Could not load /schema.</div>'; }
+	}
+
+	// #try=/par?path=/project1/x&par=tx opens that route's Try panel and sends it (shareable links).
+	async function tryFromHash() {
+		const m = location.hash.match(/^#try=([^?]+)(?:\?(.*))?$/);
+		if (!m) return;
+		showTab('routes');
+		await loadRoutes();
+		const uri = decodeURIComponent(m[1]);
+		const wrap = $('routeList').querySelector(`.rwrap[data-route="${CSS.escape(uri)}"]`);
+		const btn = wrap && wrap.querySelector('[data-try]');
+		if (!btn) return;
+		btn.click();
+		const panel = wrap.querySelector('.try');
+		panel.querySelector('input[data-extra]').value = m[2] ? decodeURIComponent(m[2]) : '';
+		wrap.scrollIntoView({ block: 'start' });
+		sendTry(uri, panel);
+	}
+
+	function drawRoutes() {
+		const q = $('rq').value.trim().toLowerCase();
+		const rows = routes.filter(([u, r]) => !q || (u + ' ' + r.summary).toLowerCase().includes(q));
+		$('routeList').innerHTML = rows.map(([u, r]) => {
+			const w = !r.methods.includes('GET') || WRITE_ROUTES.has(u);
+			const tryBtn = canTry(u, r) ? `<button class="btn tiny" data-try="${esc(u)}">Try</button>` : '';
+			return `<div class="rwrap" data-route="${esc(u)}">
+				<div class="r ${w ? 'w' : ''}"><span class="u">${esc(u)}</span><span class="m">${esc(r.methods.join(' / '))}</span><span class="s">${esc(r.summary)}</span>${tryBtn}</div>
+				<div class="try" hidden></div>
+			</div>`;
+		}).join('') || '<div class="empty">No routes match.</div>';
+	}
+	$('rq').addEventListener('input', () => routes && drawRoutes());
+
+	// Query params that only mean something on POST; a GET try doesn't offer them.
+	const WRITE_ONLY = { '/par': ['value', 'expr', 'reset', 'unbind'], '/dat': ['mode'], '/smoketest': ['writeTest'] };
+
+	function tryForm(uri, spec) {
+		const skip = new Set(WRITE_ONLY[uri] || []);
+		const params = Object.entries((spec.request && spec.request.query) || {}).filter(([n]) => !skip.has(n));
+		const examples = (spec.examples || []).filter((x) => x.method === 'GET' && x.query);
+		const fields = params.map(([name, p]) => `<label class="fld"><span>${esc(name)}${p.required ? ' *' : ''}</span>
+			<input data-p="${esc(name)}" placeholder="${esc(p.default !== undefined ? String(p.default) : p.type || '')}"></label>`).join('');
+		return `<div class="tryform">
+			${fields ? `<div class="fields">${fields}</div>` : ''}
+			<label class="fld wide"><span>${fields ? 'more query params' : 'query string'}</span>
+				<input data-extra placeholder="e.g. path=/project1&amp;recursive=true"></label>
+			<div class="tryactions">
+				<button class="btn send" data-send="${esc(uri)}">Send GET</button>
+				${examples.map((x) => `<button class="chip" data-example="${esc(x.query)}" title="${esc(x.description || '')}">${esc(x.query)}</button>`).join('')}
+			</div>
+			<div class="result"></div>
+		</div>`;
+	}
+
+	function queryFrom(panel) {
+		const qs = new URLSearchParams();
+		panel.querySelectorAll('input[data-p]').forEach((i) => { if (i.value.trim()) qs.set(i.dataset.p, i.value.trim()); });
+		const extra = panel.querySelector('input[data-extra]').value.trim().replace(/^\?/, '');
+		if (extra) new URLSearchParams(extra).forEach((v, k) => qs.set(k, v));
+		return qs.toString();
+	}
+
+	async function sendTry(uri, panel) {
+		const out = panel.querySelector('.result');
+		const query = queryFrom(panel);
+		const url = uri + (query ? '?' + query : '');
+		const curl = `curl -s "http://127.0.0.1:${selfPort}${url}"`;
+		out.innerHTML = '<div class="meta">Sending…</div>';
+		const t0 = performance.now();
+		try {
+			const r = await fetch(url, { headers: HDR });
+			const ms = (performance.now() - t0).toFixed(0);
+			const type = r.headers.get('content-type') || '';
+			const head = `<div class="meta"><span class="status ${r.ok ? 'ok' : 'bad'}">${r.status}</span> · ${ms} ms · ${esc(type.split(';')[0])}
+				<button class="chip" data-copy="${esc(curl)}">copy curl</button></div><code class="curl">${esc(curl)}</code>`;
+			if (type.startsWith('image/')) {
+				const img = URL.createObjectURL(await r.blob());
+				out.innerHTML = head + `<img class="shot" src="${img}" alt="${esc(url)}">`;
+				return;
+			}
+			let text = await r.text();
+			const size = text.length;
+			if (type.includes('json')) {
+				try {
+					const data = JSON.parse(text);
+					text = JSON.stringify(data, null, 2);
+					if (data && data.jobId && data.status === 'running') {	// background job: offer to collect it
+						out.innerHTML = head + `<pre>${esc(text)}</pre><div class="tryactions"><button class="btn" data-job="${esc(data.jobId)}">Collect job result</button></div>`;
+						return;
+					}
+				} catch (e) { /* show as text */ }
+			}
+			const shown = text.length > 200000 ? text.slice(0, 200000) + `\n… (${size.toLocaleString()} chars, showing the first 200,000)` : text;
+			out.innerHTML = head + `<pre class="big">${esc(shown)}</pre>`;
+		} catch (e) {
+			out.innerHTML = `<div class="meta"><span class="status bad">failed</span> · ${esc(e.message)} (is TD running?)</div>`;
+		}
+	}
+
+	$('routeList').addEventListener('click', async (ev) => {
+		const wrap = ev.target.closest('.rwrap');
+		if (!wrap) return;
+		const uri = wrap.dataset.route;
+		const panel = wrap.querySelector('.try');
+		const t = ev.target;
+		if (t.dataset.try !== undefined) {
+			if (panel.hidden && !panel.innerHTML) panel.innerHTML = tryForm(uri, Object.fromEntries(routes)[uri]);
+			panel.hidden = !panel.hidden;
+			t.textContent = panel.hidden ? 'Try' : 'Close';
+			if (!panel.hidden) { const first = panel.querySelector('input'); if (first) first.focus(); }
+		} else if (t.dataset.send !== undefined) {
+			sendTry(uri, panel);
+		} else if (t.dataset.example !== undefined) {
+			panel.querySelectorAll('input[data-p]').forEach((i) => { i.value = ''; });
+			panel.querySelector('input[data-extra]').value = t.dataset.example;
+			sendTry(uri, panel);
+		} else if (t.dataset.copy !== undefined) {
+			try { await navigator.clipboard.writeText(t.dataset.copy); t.textContent = 'copied'; } catch (e) { t.textContent = 'copy failed'; }
+		} else if (t.dataset.job !== undefined) {
+			const res = panel.querySelector('.result');
+			res.insertAdjacentHTML('beforeend', '<div class="meta">Collecting…</div>');
+			for (let i = 0; i < 40; i++) {
+				const st = await (await fetch(`/job?id=${encodeURIComponent(t.dataset.job)}`, { headers: HDR })).json();
+				if (st.status !== 'running') {
+					if (st.frameUrls && st.frameUrls.length) {
+						const imgs = await Promise.all(st.frameUrls.map(async (f) => URL.createObjectURL(await (await fetch(f, { headers: HDR })).blob())));
+						res.innerHTML += imgs.map((s) => `<img class="shot" src="${s}">`).join('');
+					}
+					res.innerHTML += `<pre>${esc(JSON.stringify(st, null, 2))}</pre>`;
+					return;
+				}
+				await new Promise((ok) => setTimeout(ok, Math.max(100, (st.waitSeconds || 0.2) * 1000)));
+			}
+			res.innerHTML += '<div class="meta">Job still running after ~10 s.</div>';
+		}
+	});
+	$('routeList').addEventListener('keydown', (ev) => {	// Enter in any field sends
+		if (ev.key !== 'Enter' || !ev.target.matches('.try input')) return;
+		const wrap = ev.target.closest('.rwrap');
+		sendTry(wrap.dataset.route, wrap.querySelector('.try'));
+	});
+
+	if (['how', 'routes'].includes(location.hash.slice(1))) showTab(location.hash.slice(1));	// after loadRoutes' state exists
+	tryFromHash();
+	loadInfo();
+	render();
+	poll();
+	setInterval(poll, 1000);
+	setInterval(updateLast, 5000);
+	setInterval(() => scanSiblings([3031, 3040]), 20000);
+	document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
+})();
+</script>
+</body>
+</html>
