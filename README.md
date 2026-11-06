@@ -1,5 +1,7 @@
 # TdHttpApi: an agent bridge for TouchDesigner
 
+![](/docs/screenshot.png)
+
 Drop `TdHttpApi.tox` into any TouchDesigner project and AI coding agents (Claude Code, Codex,
 Copilot, …) can see, build and debug your live network. They connect over plain HTTP (curl) or MCP.
 
