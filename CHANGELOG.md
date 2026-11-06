@@ -30,5 +30,12 @@ First standalone release, after the bridge moved out of haxlib into its own repo
   one `PAR_HELP` table in the route code.
 - The route-code DAT is now `td_http_api` (was `callbacks`); the startup DATs follow whatever it's named.
 - The COMP viewer is an SVG: a logo with the port and app label under it (`text_logo_svg` + the `SVG` COMP).
+  The default logo is a `<••>` bracket face (code + agent). A thin rule separates it from a larger,
+  more legible port and label.
 - `/snapshot?format=png` works without the leading dot.
+- `/help?class=OP` (and `COMP`) reads the full `OP_Class` page; it used to land on a near-empty stub.
+  `section=Methods` now includes its subsections, `section=Methods/General` picks one nested heading,
+  and search results give that path.
+- `scripts/release.py prepare` refuses to run with uncommitted changes, and the release commit
+  contains only the files it changes.
 - Removed network templates (`/create-from-template`): `/build` covers it.

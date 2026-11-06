@@ -48,6 +48,10 @@ in TD keeps `src/TdHttpApi.tox` current.
 python scripts/release.py prepare patch      # or minor, major, or an exact X.Y.Z
 ```
 
+Everything you want in the release must already be committed: `prepare` refuses to run while any
+tracked file has uncommitted changes (untracked files are ignored). That keeps the release commit
+down to the files `prepare` itself changes.
+
 It:
 1. Checks that `CHANGELOG.md` has notes under **Unreleased** (and stops if not).
 2. Writes the new `VERSION` into `src/td_http_api.py` and waits until the running bridge reports it
@@ -75,9 +79,10 @@ free port), run the same checks there, then delete it.
 
 ### 3. Commit and push
 
+Commit only the files `prepare` changed (it warns if anything else changed while it ran):
+
 ```
-git add -A
-git commit -m "Release vX.Y.Z"
+git commit -m "Release vX.Y.Z" -- CHANGELOG.md src/td_http_api.py src/TdHttpApi.tox
 git push origin main
 ```
 

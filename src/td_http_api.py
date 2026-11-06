@@ -997,7 +997,7 @@ You are connected to a live TouchDesigner project over its HTTP bridge (this ser
 - **Edit code:** `POST /dat?mode=edit` with JSON `{{"old": "...", "new": "..."}}`
 - **See output:** `/snapshot` (any op; non-TOPs return a `/job`), `/sample` (pixel stats), `/chop`
 - **TouchDesigner docs:** `GET /help?q=feedback` (search), `/help?op=noiseTOP&par=period` (one
-  parameter), `/help?class=OP&section=General`. TD's own offline docs for this build.
+  parameter), `/help?class=OP&section=Methods/General`. TD's own offline docs for this build.
 - **Official example networks:** `GET /examples?q=...` (OP Snippets) or `GET /examples.tsv`
 - **Health Status:** `GET /health`
 - **Request Logs:** `GET /logs`
@@ -1589,13 +1589,14 @@ def _help_names(root):
 	return cache[1]
 
 
-def _help_resolve(name):
+def _help_resolve(name, prefer_class=False):
 	"""Page name for a loose reference ('noiseTOP', 'Noise TOP', 'OP' -> 'OP_Class', 'td.OP'), or
-	raises BridgeError help_page_not_found with suggestions."""
+	raises BridgeError help_page_not_found with suggestions. prefer_class (the class= param) tries
+	'<name>_Class' first: the offline help has stub pages like OP.htm and COMP.htm that would win."""
 	names = _help_names(_offline_help_root())
 	raw = re.sub(r'^td\.', '', (name or '').strip())
 	key = _help_norm(raw.replace('.htm', ''))
-	for k in (key, key + 'class'):
+	for k in ((key + 'class', key) if prefer_class else (key, key + 'class')):
 		if k in names:
 			return names[k]
 	close = difflib.get_close_matches(key, list(names), n=6, cutoff=0.6)
@@ -1749,7 +1750,7 @@ def _help_search(query, limit):
 			title_hits = sum(t in title_words for t in terms)
 			page_score += 60 * title_hits
 			best = None
-			for level, heading, text in page['sections']:
+			for idx, (level, heading, text) in enumerate(page['sections']):
 				low = text.lower()
 				head_low = heading.lower()
 				covered = 0
@@ -1764,11 +1765,12 @@ def _help_search(query, limit):
 					continue
 				score = page_score + count + 40 * covered * covered // len(terms)
 				if best is None or score > best[0]:
-					best = (score, heading, text)
+					best = (score, heading, text, idx)
 			if best is None and page_score:
-				best = (page_score, page['sections'][0][1] if page['sections'] else '', '')
+				best = (page_score, page['sections'][0][1] if page['sections'] else '', '', 0)
 			if best is not None:
-				results.append({'page': name, 'title': page['title'], 'section': best[1], 'score': best[0],
+				section = _help_section_paths(page['sections'])[best[3]] if page['sections'] else best[1]
+				results.append({'page': name, 'title': page['title'], 'section': section, 'score': best[0],
 					'snippet': _help_snippet(best[2], terms)})
 		results.sort(key=lambda r: -r['score'])
 		seen = {}
@@ -1792,9 +1794,40 @@ def _help_search(query, limit):
 	return results[:limit]
 
 
-def _help_page(name):
+def _help_section_paths(sections):
+	"""'Parent/Child' path per (level, heading, text) section, so a heading repeated under different
+	parents (OP_Class has 'General' under both Members and Methods) can be addressed. Level-1 headings
+	(the page title / Summary) aren't used as parents."""
+	paths, chain = [], []
+	for lv, h, t in sections:
+		chain = [(l, n) for l, n in chain if l < lv]
+		paths.append('/'.join([n for l, n in chain if l >= 2] + [h]))
+		chain.append((lv, h))
+	return paths
+
+
+def _help_pick_sections(sections, paths, want):
+	"""Indexes of the sections a section= value selects: exact path, else exact heading, else
+	substring of the path, each extended with the deeper-level subsections that follow it.
+	An empty want selects everything."""
+	if not want:
+		return list(range(len(sections)))
+	lows = [p.lower() for p in paths]
+	heads = [h.lower() for lv, h, t in sections]
+	hits = [i for i, p in enumerate(lows) if p == want] or [i for i, h in enumerate(heads) if h == want] or \
+		[i for i, p in enumerate(lows) if want in p]
+	picked = []
+	for i in hits:
+		j = i + 1
+		while j < len(sections) and sections[j][0] > sections[i][0]:
+			j += 1
+		picked.extend(k for k in range(i, j) if k not in picked)
+	return picked
+
+
+def _help_page(name, prefer_class=False):
 	"""(page, title, sections) from the index when ready, else parsed from the file now."""
-	page = _help_resolve(name)
+	page = _help_resolve(name, prefer_class)
 	state = _help_state()
 	if state['status'] == 'ready' and page in state['pages']:
 		entry = state['pages'][page]
@@ -1850,12 +1883,14 @@ def _route_help(request, response, pars, **_):
 		state = _help_state()
 		_ok_json(response, {'root': root, 'index': _help_status(state), 'usage': [
 			'/help?q=feedback loop', '/help?page=Noise_TOP', '/help?op=noiseTOP&section=Parameters',
-			'/help?op=noiseTOP&par=period', '/help?class=OP&section=General', '/help?page=Noise_TOP&full=true']})
+			'/help?op=noiseTOP&par=period', '/help?class=OP&section=Methods/General', '/help?page=Noise_TOP&full=true']})
 		return
 	_help_start_index()	# warm the index for later searches
-	page, title, sections = _help_page(name)
+	page, title, sections = _help_page(name, prefer_class=not _first_param(pars, 'page') and not _first_param(pars, 'op'))
+	paths = _help_section_paths(sections)
 	out ={'page': page, 'title': title, 'url': _HELP_URL + page,
-		'sections': [{'heading': h, 'level': lv, 'chars': len(t)} for lv, h, t in sections]}
+		'sections': [dict({'heading': h, 'level': lv, 'chars': len(t)}, **({'path': p} if p != h else {}))
+			for p, (lv, h, t) in zip(paths, sections)]}
 	par = _first_param(pars, 'par')
 	section = _first_param(pars, 'section')
 	if par:
@@ -1865,13 +1900,12 @@ def _route_help(request, response, pars, **_):
 				page=page)
 		out.update(section=heading, text=text)
 	elif section or _bool_param(pars, 'full', False):
-		want = (section or '').lower()
-		picked = [(h, t) for lv, h, t in sections if not want or h.lower() == want] or \
-			[(h, t) for lv, h, t in sections if want in h.lower()]
+		want = re.sub(r'\s*[/>]\s*', '/', (section or '').strip().lower())
+		picked = _help_pick_sections(sections, paths, want)
 		if not picked:
 			raise BridgeError(f"no section '{section}' on {page}", code='help_section_not_found', status=404,
-				validValues=[h for lv, h, t in sections])
-		text = '\n\n'.join(f'## {h}\n{t}' for h, t in picked)
+				validValues=paths, hint='a heading matches its subsections too; Parent/Child picks one nested heading')
+		text = '\n\n'.join(f'## {paths[i]}\n{sections[i][2]}' for i in picked if sections[i][2] or len(picked) == 1)
 		cap = _HELP_SECTION_CAP * (2 if not want else 1)
 		if len(text) > cap:
 			out['truncated'] = True
@@ -2170,7 +2204,7 @@ _SCHEMA_OVERRIDES = {
 			'page': {'type': 'string', 'required': False, 'description': 'Page to read: Noise_TOP, noiseTOP, "Noise TOP", OP_Class'},
 			'op': {'type': 'string', 'required': False, 'description': 'Same as page, by operator type (noiseTOP)'},
 			'class': {'type': 'string', 'required': False, 'description': 'Python class page (OP, td.Par, CHOP)'},
-			'section': {'type': 'string', 'required': False, 'description': 'With page: one section (substring ok, e.g. Parameters)'},
+			'section': {'type': 'string', 'required': False, 'description': 'With page: a section and its subsections (substring ok, e.g. Parameters), or Parent/Child for one nested heading (Methods/General)'},
 			'par': {'type': 'string', 'required': False, 'description': "With page: one parameter's entry (e.g. period)"},
 			'full': {'type': 'boolean', 'required': False, 'default': False},
 			'limit': {'type': 'integer', 'required': False, 'default': 10, 'min': 1, 'max': 50},
@@ -2184,7 +2218,7 @@ _SCHEMA_OVERRIDES = {
 		'examples': [
 			{'method': 'GET', 'query': 'q=feedback loop', 'description': 'Search the docs.'},
 			{'method': 'GET', 'query': 'op=noiseTOP&par=period', 'description': "One parameter's documentation."},
-			{'method': 'GET', 'query': 'class=OP&section=General', 'description': 'Part of a Python class page.'},
+			{'method': 'GET', 'query': 'class=OP&section=Methods/General', 'description': 'Part of a Python class page.'},
 		],
 	},
 	'/smoketest': {
@@ -4028,6 +4062,7 @@ _VIEWER_FONT = "'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif"
 def viewer_svg(logo_svg, port, label, size=_VIEWER_SIZE):
 	"""The COMP viewer image as SVG text: the logo (any SVG; its viewBox is kept) above ':port' and
 	the app label."""
+	s = size
 	m = re.search(r'<svg\b([^>]*)>(.*)</svg>', logo_svg or '', re.S | re.I)
 	logo = ''
 	if m:
@@ -4038,18 +4073,19 @@ def viewer_svg(logo_svg, port, label, size=_VIEWER_SIZE):
 			view_box = f'0 0 {w.group(1) if w else 100} {h.group(1) if h else 100}'
 		else:
 			view_box = vb.group(1)
-		pad = size * 0.16
-		logo = (f'<svg x="{pad:.0f}" y="{size * 0.12:.0f}" width="{size - 2 * pad:.0f}" height="{size * 0.42:.0f}" '
+		logo = (f'<svg x="{s * 0.2:.0f}" y="{s * 0.13:.0f}" width="{s * 0.6:.0f}" height="{s * 0.36:.0f}" '
 			f'viewBox="{view_box}" preserveAspectRatio="xMidYMid meet">{m.group(2)}</svg>')
 	short = label if len(label) <= 20 else label[:19] + '…'
 	esc = _html.escape
 	port_text = f':{port}' if port else 'stopped'
-	return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 {size} {size}">'
+	return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{s}" height="{s}" viewBox="0 0 {s} {s}">'
 		f'{logo}'
-		f'<text x="{size / 2:.0f}" y="{size * 0.74:.0f}" text-anchor="middle" font-family="{_VIEWER_FONT}" '
-		f'font-size="{size * 0.13:.0f}" font-weight="600" fill="#ffffff">{esc(port_text)}</text>'
-		f'<text x="{size / 2:.0f}" y="{size * 0.88:.0f}" text-anchor="middle" font-family="{_VIEWER_FONT}" '
-		f'font-size="{size * 0.085:.0f}" fill="#ffffff" fill-opacity="0.8">{esc(short)}</text>'
+		f'<line x1="{s * 0.38:.0f}" y1="{s * 0.6:.0f}" x2="{s * 0.62:.0f}" y2="{s * 0.6:.0f}" stroke="#ffffff" '
+		f'stroke-opacity="0.35" stroke-width="{s / 128:.0f}" stroke-linecap="round"/>'
+		f'<text x="{s / 2:.0f}" y="{s * 0.77:.0f}" text-anchor="middle" font-family="{_VIEWER_FONT}" '
+		f'font-size="{s * 0.14:.0f}" font-weight="600" fill="#ffffff">{esc(port_text)}</text>'
+		f'<text x="{s / 2:.0f}" y="{s * 0.9:.0f}" text-anchor="middle" font-family="{_VIEWER_FONT}" '
+		f'font-size="{s * 0.095:.0f}" fill="#ffffff" fill-opacity="0.7">{esc(short)}</text>'
 		'</svg>')
 
 

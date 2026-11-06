@@ -1,10 +1,11 @@
 """Release helper for the TdHttpApi bridge. Standard library only; needs td-http-api.toe open in TD.
 
 	python scripts/release.py prepare patch|minor|major|X.Y.Z
-		Bump VERSION in src/td_http_api.py, wait for TD to reload it, export the clean drop-in tox to
+		Refuses to run with uncommitted changes to tracked files: commit your work first. Then bump
+		VERSION in src/td_http_api.py, wait for TD to reload it, export the clean drop-in tox to
 		build/TdHttpApi-vX.Y.Z.tox (+ build/TdHttpApi.tox), re-save the dev tox (src/TdHttpApi.tox),
 		turn CHANGELOG.md's "## Unreleased" section into "## vX.Y.Z (date)" and write its text to
-		build/release-notes-vX.Y.Z.md. Then review the diff and commit.
+		build/release-notes-vX.Y.Z.md. Then commit just those files (RELEASE_FILES) as the release.
 
 	python scripts/release.py publish [--yes]
 		After committing: tag vX.Y.Z, push the tag, and `gh release create` with the tox attached.
@@ -108,7 +109,19 @@ def changelog_release(new, write=True):
 	return notes
 
 
+RELEASE_FILES = ('CHANGELOG.md', 'src/td_http_api.py', 'src/TdHttpApi.tox')	# what prepare changes
+
+
+def uncommitted():
+	"""Tracked files with uncommitted changes (untracked files don't block a release)."""
+	return subprocess.run(['git', 'status', '--porcelain', '--untracked-files=no'], cwd=ROOT,
+		capture_output=True, text=True).stdout.rstrip()
+
+
 def prepare(args):
+	dirty = uncommitted()
+	if dirty:
+		fail(f'commit your work before preparing a release; uncommitted changes:\n{dirty}')
 	port, info = find_bridge(args.port)
 	cur = read_version()
 	new = fmt(next_version(cur, args.bump))
@@ -137,8 +150,11 @@ def prepare(args):
 	notes_path = os.path.join(BUILD, f'release-notes-v{new}.md')
 	open(notes_path, 'w', encoding='utf-8', newline='\n').write(notes + '\n')
 	print(f'[release] notes: {os.path.relpath(notes_path, ROOT)}')
+	stray = [l for l in uncommitted().splitlines() if l[3:].strip() not in RELEASE_FILES]
+	if stray:
+		print('[release] warning: files outside the release changed during prepare:\n  ' + '\n  '.join(stray))
 	print(f'\nNext (docs/RELEASING.md): check build/TdHttpApi.tox in an empty project, review the diff, then\n'
-		f'  git add -A && git commit -m "Release v{new}" && git push origin main\n'
+		f'  git commit -m "Release v{new}" -- {" ".join(RELEASE_FILES)} && git push origin main\n'
 		f'  python scripts/release.py publish')
 
 
@@ -154,8 +170,7 @@ def publish(args):
 	for f in (tox, notes):
 		if not os.path.isfile(os.path.join(ROOT, f)):
 			fail(f'{f} is missing: run "python scripts/release.py prepare ..." first')
-	dirty = subprocess.run(['git', 'status', '--porcelain', '--untracked-files=no'], cwd=ROOT,
-		capture_output=True, text=True).stdout.strip()
+	dirty = uncommitted()
 	if dirty:
 		fail(f'commit first; uncommitted changes:\n{dirty}')
 	if not shutil.which('gh'):

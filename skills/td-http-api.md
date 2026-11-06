@@ -364,8 +364,15 @@ with every install and match its build), so agents don't need a separate docs MC
 
 - **Read** a page: `/help?page=Noise_TOP`. `op=noiseTOP`, `"Noise TOP"` and `class=OP` (→
   `OP_Class`) resolve too; unknown names → `help_page_not_found` with suggestions. The default
-  returns the summary and a list of sections. Add `section=Parameters` (substring ok; all matching
-  sections), `par=period` (just that parameter's entry, with its menu values) or `full=true`.
+  returns the summary and a list of sections. A subsection carries a `path`, e.g. `Methods/General`
+  (class pages repeat headings such as `General` under both Members and Methods). Other options:
+  - `section=Parameters`: substring ok; returns every match, each with its subsections.
+  - `section=Methods/Storage` (or `Methods > Storage`): one nested heading.
+  - `par=period`: just that parameter's entry, with its menu values.
+  - `full=true`: the whole page.
+
+  `class=` prefers the `<Name>_Class` page, because stub pages such as `OP.htm` and `COMP.htm` would
+  otherwise win. `page=OP` still reads the stub.
   Sections are capped at ~30k characters with a hint to narrow down. Reading parses the one page on
   demand, so it works immediately.
 - **Search**: `/help?q=feedback loop` returns `{results: [{page, title, section, score, snippet,

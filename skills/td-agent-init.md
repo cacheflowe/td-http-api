@@ -25,7 +25,7 @@ training data.
 ```
 curl -s "http://127.0.0.1:3031/help?q=feedback%20loop"           # search
 curl -s "http://127.0.0.1:3031/help?op=noiseTOP&par=period"       # one parameter
-curl -s "http://127.0.0.1:3031/help?class=OP&section=General"     # a Python class
+curl -s "http://127.0.0.1:3031/help?class=OP&section=Methods/General"   # a Python class
 ```
 
 A page read returns its summary and section list; add `section=` (e.g. `Parameters`), `par=` or
