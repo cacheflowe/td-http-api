@@ -23,9 +23,9 @@ Copilot, …) can see, build and debug your live network. They connect over plai
 
 ## Quick start
 
-1. Download `TdHttpApi-vX.Y.Z.tox` from the latest GitHub release and drag it into your project.
+1. Download `TdHttpApi-vX.Y.Z.tox` from the [latest GitHub release](https://github.com/cacheflowe/td-http-api/releases/latest) and drag it into your project.
 2. On the COMP, pulse **Copy Prompt** and paste the result into your agent.
-3. Pulse **Open Dashboard** to watch what the agent does.
+3. [Optional] Pulse **Open Dashboard** to watch what the agent does.
 
 Nothing to register: agents use plain HTTP, and TouchDesigner's own docs are built in (`/help`).
 MCP is there if you want it (`/mcp`); see "HTTP or MCP?" in the skill.
