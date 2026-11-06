@@ -690,7 +690,7 @@ Learned during live use of the API on a fresh project. These are already best-pr
 - **Script-body reference scanning** — extend reference detection into DAT text content, not just parameter expressions.
 - **Auth**, if this server ever needs to run somewhere less trusted than a single dev machine. The
   loopback bind and the browser Origin/Host gate are already in place (see Security above).
-- **Ideas from Derivative's official TDMCP** (compared in November 2026): see `TODO_http_bridge.md`.
+- **Ideas from Derivative's official TDMCP** (compared in November 2026): a few are still open, such as extension introspection.
 
 ## See Also
 

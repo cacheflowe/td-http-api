@@ -6,8 +6,8 @@ endpoint (`/mcp`), and a dashboard (`/ui`). It moved here from haxlib in Novembe
 any other project) consumes the packaged `.tox`.
 
 Read **[skills/td-http-api.md](skills/td-http-api.md)** before changing anything. It's the full route
-reference and the record of what was learned building it. **[TODO_http_bridge.md](TODO_http_bridge.md)**
-is the roadmap.
+reference and the record of what was learned building it. The roadmap is `TODO_http_bridge.md`: a local,
+gitignored file that may not exist in your checkout.
 
 ## Layout
 

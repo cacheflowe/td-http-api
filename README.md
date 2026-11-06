@@ -53,7 +53,7 @@ instructions; the files work there as-is.
 skill to install.)
 
 Full user guide: [src/TdHttpApi_README.md](src/TdHttpApi_README.md). Agent/route reference:
-[skills/td-http-api.md](skills/td-http-api.md). Roadmap: [TODO_http_bridge.md](TODO_http_bridge.md).
+[skills/td-http-api.md](skills/td-http-api.md).
 
 ## Developing
 
