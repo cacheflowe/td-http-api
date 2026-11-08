@@ -5,6 +5,30 @@ A release is a version tag in git plus a GitHub Release
 drop-in tox attached and the changelog section as its notes. Users download
 `TdHttpApi-vX.Y.Z.tox` from there; the repo itself doesn't contain release toxes.
 
+## Quick reference
+
+With `td-http-api.toe` open in TD, everything committed, and notes under **Unreleased** in
+`CHANGELOG.md`:
+
+```
+python scripts/release.py prepare patch       # bump, export build/TdHttpApi-vX.Y.Z.tox, roll the changelog
+# check build/TdHttpApi.tox in a sandbox COMP: /smoketest passes, /server-info shows the new version
+git commit -m "Release vX.Y.Z" -- CHANGELOG.md src/td_http_api.py src/TdHttpApi.tox
+git push origin main
+python scripts/release.py publish             # tag, push the tag, create the GitHub release
+```
+
+For a bigger jump, change only the `prepare` argument:
+
+| Argument | 0.1.1 becomes | When |
+|---|---|---|
+| `patch` | 0.1.2 | Fixes and doc changes |
+| `minor` | 0.2.0 | New routes, parameters or features |
+| `major` | 1.0.0 | A route or parameter renamed or removed, or a response reshaped |
+| `X.Y.Z` | exactly that | Anything else, e.g. `prepare 1.0.0` for a first stable release |
+
+The rest of the steps are the same. Details for each step are below.
+
 ## What gets released
 
 | File | What it is |
