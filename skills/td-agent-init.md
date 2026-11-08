@@ -54,6 +54,11 @@ Each live bridge answers with its `label` (the name the developer gave it, also 
 viewer), `project` and `port`. Use only the port for the app we're working on, and tell me which one
 you picked.
 
+If **no bridge answers at all**, TouchDesigner probably isn't running. Say so, and ask me to open
+the project rather than launching it yourself. For a change that only takes effect after a TD
+restart, or to test something in a throwaway TD process, see the **`td-process-testing`** skill
+(`GET /docs?name=td-process-testing`).
+
 ## Two rules that WILL bite you if ignored
 
 - **Use `127.0.0.1`, never `localhost`** — localhost adds ~200ms per call.

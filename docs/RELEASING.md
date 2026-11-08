@@ -9,7 +9,7 @@ drop-in tox attached and the changelog section as its notes. Users download
 
 | File | What it is |
 |---|---|
-| `build/TdHttpApi-vX.Y.Z.tox` | **The release.** A clean copy of the bridge COMP: every file sync, the external tox path, Save Tox With Project, Active Port and Agent Prompt cleared, so it refers to none of this repo's files. Attached to the GitHub Release; `build/` is gitignored. |
+| `build/TdHttpApi-vX.Y.Z.tox` | **The release.** A clean copy of the bridge COMP: every file sync, the external tox path (value and expression), Active Port and Agent Prompt cleared, and the dev-only Save Tox With Project toggle and post-save hook removed, so it refers to none of this repo's files. Attached to the GitHub Release; `build/` is gitignored. |
 | `build/TdHttpApi.tox` | The same file without the version in its name, for local testing. |
 | `build/release-notes-vX.Y.Z.md` | The changelog section, used as the release notes. |
 | `src/TdHttpApi.tox` | **Not a release.** The dev tox, committed, with this repo's file syncs still set. Re-saved on every project save. Don't hand it to users. |

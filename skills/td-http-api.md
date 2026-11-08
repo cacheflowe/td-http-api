@@ -47,10 +47,10 @@ The COMP's **TdHttpApi** page has these parameters, created by `setup_component(
 | `Agentprompt` | Read-only one-liner to paste into an agent. It points at this instance's `/init`. (TD custom pars are single-line text fields, so the full prompt can't be shown as a par.) |
 | `Copyprompt` | Pulse: copies the **full multi-line** init prompt (the same text `/init` serves, with this port) to the clipboard via `ui.clipboard`. |
 | `Opendashboard` | Pulse: opens `/ui` in the browser. |
-| `Savetoxwithproject` | When on, every project save also saves this COMP to its External .tox path (`execute_start`'s `onProjectPostSave` → `on_project_save()`). On in the dev project; `/export-release` turns it off in release toxes so a user's save never overwrites a downloaded tox. |
+| `Savetoxwithproject` | When on, every project save also saves this COMP to its External .tox path (`execute_start`'s `onProjectPostSave` → `on_project_save()`). Development only: `setup_component()` adds it (and the post-save hook) only when the route code is file-synced, and `/export-release` removes both from release toxes, so a user's save never overwrites a downloaded tox. |
 | `Version` | Read-only: the bridge's `VERSION`. |
 
-- **Startup.** The `execute_start` DAT (onStart / onCreate; also onProjectPostSave for Save Tox With Project) and `parexec_server` (Port, Portrange,
+- **Startup.** The `execute_start` DAT (onStart / onCreate; in the dev copy also onProjectPostSave for Save Tox With Project) and `parexec_server` (Port, Portrange,
   Restart) call `start_server()`. That function stops the Web Server DAT, waits two frames,
   exclusive-bind-tests each port and starts on the first free one.
   - It's deferred with `run()`, so it's safe to trigger from inside a request to the same server.
@@ -186,6 +186,13 @@ Two different reload mechanisms are in play, and mixing them up is the most comm
 
 `/reload` itself reloads `td_http_api.py` too (it's a normal file-based module from `config.ReloadModules()`'s point of view, in addition to being Callback-DAT content) — so the usual loop when iterating is: edit the file → `curl .../reload` → retest.
 
+**Some changes need a TD restart:** an installed or upgraded Python package with compiled parts
+(numpy, torch, …), environment variables TD reads at startup, or a Custom OP (C++ plugin).
+For those, and for testing a `.tox` in a fresh TD process (launched on a driver tox that writes a
+JSON result and quits), see [td-process-testing.md](td-process-testing.md). It covers Windows
+and macOS, including how to write the launcher. In short, the user restarts their own TD; an agent
+only launches and stops TD processes it started itself.
+
 ---
 
 ## Best Practices
@@ -284,8 +291,9 @@ code to `src/td_http_api.py`, the dashboard to `src/TdHttpApi_dashboard.html`, t
   python scripts/release.py publish         # tag, push the tag, gh release create with the tox attached
   ```
   The export is `POST /export-release`. It saves a copy of the COMP with every file sync, the
-  external tox path and the per-session pars (Active Port, Agent Prompt) cleared, then restores
-  them, so the release tox refers to none of this repo's files. `VERSION` at the top of
+  external tox path (value and expression) and the per-session pars (Active Port, Agent Prompt)
+  cleared, and the dev-only Save Tox With Project toggle and its post-save hook removed. Then it
+  restores them, so the release tox refers to none of this repo's files and never saves itself. `VERSION` at the top of
   `td_http_api.py` is the only place the version lives.
 - **To check a release**, `loadTox` it into a throwaway COMP (it takes the next free port), curl
   `/smoketest` and `/examples` on that port, then destroy it.
@@ -590,7 +598,7 @@ version. To open an individual example, see [skills/td-network-craft.md](skills/
 | `/select` | POST | `path` or `paths`, `home` (bool, default true), `zoom` (bool, default true) | Sets the TD UI's selection to these nodes and (unless `home=false`) navigates the network editor to their parent and homes on them. The write-side mirror of `/selected` — lets an agent direct the user's attention. Returns the selected node summaries. |
 | `/save` | POST/PUT | `path` (optional, default: current project file — always passed explicitly so no modal Save As can block TD), `saveExternalToxs` (bool, default `false`) | `{saved, path, saveExternalToxs}` — `project.save()`, the Ctrl+S equivalent. Doesn't touch external `.tox` files unless `saveExternalToxs=true`; see `/save-external-tox` to save just one external-tox-backed COMP. |
 | `/save-external-tox` | POST/PUT | `path` (a COMP with a non-blank `externaltox` par), `recursive` (bool, default `false`) | `{path, externaltox, recursive, saved}` — `COMP.saveExternalTox()`. Saves that one COMP out to its already-configured external `.tox` file, independent of the project save and of whether the COMP is currently flagged dirty. If the COMP's **Enable External .tox** is off (embedded in the `.toe`, as in the dev project), TD skips it and returns 0; the route then writes the file with `COMP.save()` and says so (`"via": "COMP.save"`). |
-| `/export-release` | POST/PUT | `output` (default `build/TdHttpApi-v<VERSION>.tox`, relative to the project folder) | `{output, version, bytes, unsyncedDATs}`. Saves a clean drop-in copy of the bridge COMP: file syncs, the external tox path, Active Port and Agent Prompt are cleared in the saved file only, then restored. Used by `scripts/release.py`. |
+| `/export-release` | POST/PUT | `output` (default `build/TdHttpApi-v<VERSION>.tox`, relative to the project folder) | `{output, version, bytes, unsyncedDATs}`. Saves a clean drop-in copy of the bridge COMP: file syncs, the external tox path (value and expression), Active Port and Agent Prompt are cleared, and Save Tox With Project with its post-save hook removed, in the saved file only, then restored. Used by `scripts/release.py`. |
 
 ### Execute / Utility
 
@@ -696,6 +704,7 @@ Learned during live use of the API on a fresh project. These are already best-pr
 
 - [skills/td-network-craft.md](skills/td-network-craft.md) — learning idiomatic network-building technique from the official OP Snippets corpus using this tooling; home of the snippet catalog and verified craft notes.
 - [skills/td-common-mistakes.md](skills/td-common-mistakes.md) — Reference for avoiding common TD Python, parameter, and callback mistakes.
+- [skills/td-process-testing.md](skills/td-process-testing.md) — when a TD restart is really needed, handing it to the user, and testing a `.tox` in a throwaway TD process, on Windows or macOS (plus Custom OP plugin development).
 - haxlib's `td-skills` skill — Meta-skill for TouchDesigner AI assistance, API hierarchies, and documentation.
 - haxlib's `td-appstore` skill — the AppStore extension, one of the first real networks this tool was used to explore
 - haxlib's `td-vscode-python-environment` skill — module import scheme (`import td_util`), `td.reloadModules()`, and why TD types cause errors during reload

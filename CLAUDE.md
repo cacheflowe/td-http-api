@@ -17,7 +17,7 @@ gitignored file that may not exist in your checkout.
 | `src/TdHttpApi.tox` | The dev tox (file paths still set). Re-saved on every project save (Save Tox With Project), or with `/save-external-tox?path=/project1/TdHttpApi` |
 | `src/TdHttpApi_dashboard.html` | The `/ui` dashboard (vanilla JS, no external resources) |
 | `src/TdHttpApi_README.md` | The user-facing README embedded in the tox |
-| `skills/` | Agent docs embedded in the tox and served at `/docs`: `td-http-api.md`, `td-network-craft.md`, `td-common-mistakes.md`; `td-agent-init.md` is the prompt served at `/init` |
+| `skills/` | Agent docs embedded in the tox and served at `/docs`: `td-http-api.md`, `td-network-craft.md`, `td-common-mistakes.md`, `td-process-testing.md` (restarting TD, fresh-process tests; the agent writes its own launcher per platform); `td-agent-init.md` is the prompt served at `/init` |
 | `scripts/release.py` | Release: bump `VERSION`, export `build/TdHttpApi-vX.Y.Z.tox`, roll the changelog, tag + `gh release` |
 | `CHANGELOG.md` | Add notes under **Unreleased** as you change things |
 | `docs/RELEASING.md` | The release process, local and GitHub |

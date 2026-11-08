@@ -45,6 +45,7 @@ before it connects, install the skills in [skills/](skills/):
 | [td-http-api](skills/td-http-api.md) | Every bridge route, the error contract, and lessons from building networks through it |
 | [td-network-craft](skills/td-network-craft.md) | Idiomatic network building, learned from Derivative's OP Snippets |
 | [td-common-mistakes](skills/td-common-mistakes.md) | TouchDesigner Python traps (parameter names, `.val` vs `.eval()`, threading, …) |
+| [td-process-testing](skills/td-process-testing.md) | Restarting TD safely, and testing a `.tox` in a throwaway TD process (Windows and macOS) |
 
 Each file is a standard skill (Markdown with `name` and `description` frontmatter). For Claude Code,
 copy one to `~/.claude/skills/<name>/SKILL.md` (every project) or `<project>/.claude/skills/<name>/SKILL.md`

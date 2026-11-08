@@ -127,6 +127,7 @@ The bridge carries its own agent docs and serves them to the agent (`/init`, `/d
 - `td-http-api.md` — friction points and best practices
 - `td-network-craft.md` — idiomatic network-building technique
 - `td-common-mistakes.md` — common TD Python traps to avoid
+- `td-process-testing.md` — restarting TD safely, and testing in a throwaway TD process
 
 ### **TouchDesigner docs**
 Built in: agents ask the bridge (`/help`), which reads TD's own offline documentation for your

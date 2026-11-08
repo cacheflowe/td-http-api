@@ -887,12 +887,22 @@ def on_project_save(comp):
 
 def _route_export_release(request, response, pars, webServerDAT, **_):
 	"""Save a clean drop-in copy of this bridge COMP (default build/TdHttpApi-v<VERSION>.tox): file
-	syncs, the external .tox path and per-session state are cleared in the saved file only, then
-	restored here. Used by scripts/release.py."""
+	syncs, the external .tox path (value and expression), the dev-only Save Tox With Project toggle
+	and post-save hook, and per-session state are removed in the saved file only, then restored
+	here. Used by scripts/release.py."""
 	_require_write_method(request, '/export-release')
 	comp = webServerDAT.parent()
 	output = _first_param(pars, 'output') or f'build/TdHttpApi-v{VERSION}.tox'
 	full = (output if os.path.isabs(output) else os.path.join(project.folder, output)).replace('\\', '/')
+	save_tox = getattr(comp.par, 'Savetoxwithproject', None)
+	save_tox = save_tox.eval() if save_tox is not None else None
+	dev = _package_dir(comp) is not None
+	# Before the clears below: it refreshes the agent prompt, which the clears then blank.
+	setup_component(comp, dev=False)
+	ext = getattr(comp.par, 'externaltox', None)
+	ext_state = (ext.mode, ext.expr) if ext is not None else None
+	if ext is not None and ext.expr:
+		ext.expr = ''
 	# (par, original value). Order matters: sync off before the file is cleared, and restored in
 	# reverse so the file is set again before sync is turned back on.
 	changed = []
@@ -909,8 +919,7 @@ def _route_export_release(request, response, pars, webServerDAT, **_):
 			clear(getattr(dat.par, 'syncfile', None), False)
 			clear(getattr(dat.par, 'loadonstart', None), False)
 			clear(dat.par.file, '')
-	clear(getattr(comp.par, 'externaltox', None), '')
-	clear(getattr(comp.par, 'Savetoxwithproject', None), False)
+	clear(ext, '')
 	clear(getattr(comp.par, 'Activeport', None), 0)
 	clear(getattr(comp.par, 'Agentprompt', None), '(server not running)')
 	clear(getattr(comp.par, 'Version', None), VERSION)
@@ -920,6 +929,12 @@ def _route_export_release(request, response, pars, webServerDAT, **_):
 		for par, value in reversed(changed):
 			if par.name != 'Version':
 				par.val = value
+		if ext_state is not None and ext_state[1]:
+			ext.expr = ext_state[1]
+			ext.mode = ext_state[0]	# setting expr switches the mode; keep the original
+		setup_component(comp, dev=dev)
+		if save_tox is not None and getattr(comp.par, 'Savetoxwithproject', None) is not None:
+			comp.par.Savetoxwithproject = save_tox
 	_ok_json(response, {
 		'output': full,
 		'version': VERSION,
@@ -1236,8 +1251,8 @@ and idiomatic TouchDesigner network-building technique.
 
 Included docs (in order below): {names}
 
-Fetch a single doc instead of all of them with `GET /docs?name=<docname>` (works with or without its
-`docs_` prefix), or list available doc names with `GET /docs?list=true`.
+Fetch a single doc instead of all of them with `GET /docs?name=<docname>` (e.g. `td-http-api`; the
+`docs_skill_` prefix is optional), or list available doc names with `GET /docs?list=true`.
 
 For a live, code-accurate reference of every route this server currently supports (method + one-line
 summary, generated straight from the running handlers rather than this prose), see `GET /routes`.
@@ -1271,7 +1286,7 @@ def _route_docs(request, response, pars, webServerDAT, **_):
 		normalized_filter = name_filter.replace('-', '_')
 		matches = [
 			n for n in all_docs
-			if n.name == normalized_filter or n.name == f'docs_{normalized_filter}'
+			if n.name in (normalized_filter, f'docs_{normalized_filter}', f'docs_skill_{normalized_filter}')
 		]
 		if not matches:
 			raise ValueError(f"no doc named '{name_filter}'. available: {', '.join(n.name for n in all_docs)}")
@@ -3924,9 +3939,13 @@ PAR_HELP = {
 }
 
 
-def setup_component(comp):
-	"""Create (or update) the bridge COMP's custom pars and its startup DATs. Idempotent."""
-	page = next((p for p in comp.customPages if p.name == 'TdHttpApi'), None) or comp.appendCustomPage('TdHttpApi')
+def setup_component(comp, dev=None):
+	"""Create (or update) the bridge COMP's custom pars and its startup DATs. Idempotent.
+	dev: include Save Tox With Project and its post-save hook, which only make sense while developing
+	the bridge. Defaults to whether the route code is file-synced; /export-release passes False."""
+	if dev is None:
+		dev = _package_dir(comp) is not None
+	page =next((p for p in comp.customPages if p.name == 'TdHttpApi'), None) or comp.appendCustomPage('TdHttpApi')
 
 	def ensure(name, make, value=None):
 		par = getattr(comp.par, name, None)
@@ -3959,11 +3978,14 @@ def setup_component(comp):
 	if old is not None:
 		old.destroy()
 	ensure('Printlogs', lambda: page.appendToggle('Printlogs', label='Print Logs'), False)
-	p = ensure('Savetoxwithproject', lambda: page.appendToggle('Savetoxwithproject', label='Save Tox With Project'))
+	if dev:
+		ensure('Savetoxwithproject', lambda: page.appendToggle('Savetoxwithproject', label='Save Tox With Project'))
+	elif getattr(comp.par, 'Savetoxwithproject', None) is not None:
+		comp.par.Savetoxwithproject.destroy()
 	p = ensure('Version', lambda: page.appendStr('Version', label='Version'))
 	p.readOnly = True
-	page.sort('Label', 'Port', 'Portrange', 'Restart', 'Activeport', 'Agentprompt', 'Copyprompt', 'Opendashboard',
-		'Printlogs', 'Savetoxwithproject', 'Version')
+	page.sort(*[n for n in ('Label', 'Port', 'Portrange', 'Restart', 'Activeport', 'Agentprompt', 'Copyprompt',
+		'Opendashboard', 'Printlogs', 'Savetoxwithproject', 'Version') if getattr(comp.par, n, None) is not None])
 
 	html = comp.op('dashboard_html') or comp.create(textDAT, 'dashboard_html')
 	html.nodeX, html.nodeY = 300, -300
@@ -4004,14 +4026,17 @@ def setup_component(comp):
 	start.text = (
 		"# Pick a free port and start the bridge -- see td_http_api.py start_server()\n"
 		f"def onStart():\n\t{mod}.start_server(parent())\n\n"
-		f"def onCreate():\n\t{mod}.start_server(parent())\n\n"
-		"# Save Tox With Project: re-save this COMP's external .tox after every project save\n"
-		f"def onProjectPostSave():\n\t{mod}.on_project_save(parent())\n"
+		f"def onCreate():\n\t{mod}.start_server(parent())\n"
 	)
+	if dev:
+		start.text += (
+			"\n# Save Tox With Project: re-save this COMP's external .tox after every project save\n"
+			f"def onProjectPostSave():\n\t{mod}.on_project_save(parent())\n"
+		)
 	start.par.start = True
 	start.par.create = True
 	if getattr(start.par, 'projectpostsave', None) is not None:	# builds before project save callbacks lack it
-		start.par.projectpostsave = True
+		start.par.projectpostsave = dev
 	start.nodeX, start.nodeY = -150, 0
 	pe = comp.op('parexec_server') or comp.create(parameterexecuteDAT, 'parexec_server')
 	pe.text = (

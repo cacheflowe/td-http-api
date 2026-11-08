@@ -6,6 +6,20 @@ heading and uses it for the GitHub release notes.
 
 ## Unreleased
 
+- **New agent doc, `td-process-testing`**, embedded and served at `/docs`. It covers when a TD
+  restart is really needed and how to hand it to the user safely, testing a `.tox` in a throwaway
+  TD process that reports JSON and quits, and stopping only your own TD processes. A separate
+  section covers Custom OP (C++ plugin) development: temporary plugin installs, the
+  `Plugins.json` allow-list and locked DLLs. It covers Windows and macOS. There's no bundled launcher
+  script: the skill says what a launcher must do and gives PowerShell and bash sketches, so the
+  agent writes one for the platform it's on.
+- **Release toxes drop the development-only parts.** `/export-release` now removes the Save Tox
+  With Project toggle and its post-save hook from the release tox, instead of just turning the
+  toggle off, and also clears the leftover expression on the external tox path. A released bridge
+  has no way to re-save itself over the downloaded file.
+- **Fix:** `GET /docs?name=td-http-api` (a skill's plain name) now finds its doc. The embedded DATs
+  are named `docs_skill_*`, so only the full DAT name used to match.
+
 ## v0.1.0 (2026-11-06)
 
 First standalone release, after the bridge moved out of haxlib into its own repo.
