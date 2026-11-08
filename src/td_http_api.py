@@ -12,7 +12,7 @@ import shutil
 
 # The bridge's release version: shown in /server-info, MCP serverInfo, the Version par, release file
 # names. scripts/release.py bumps it; edit it nowhere else.
-VERSION = '0.1.0'
+VERSION = '0.1.1'
 
 # ---------------------------------------------------------------------------
 # Network description (self-contained - no td_util dependency, so this file

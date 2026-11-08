@@ -6,6 +6,8 @@ heading and uses it for the GitHub release notes.
 
 ## Unreleased
 
+## v0.1.1 (2026-11-08)
+
 - **New agent doc, `td-process-testing`**, embedded and served at `/docs`. It covers when a TD
   restart is really needed and how to hand it to the user safely, testing a `.tox` in a throwaway
   TD process that reports JSON and quits, and stopping only your own TD processes. A separate
