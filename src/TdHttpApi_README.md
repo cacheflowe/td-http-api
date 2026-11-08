@@ -54,7 +54,7 @@ Drop the `TdHttpApi.tox` component into your TouchDesigner project. It runs a lo
 port 3031, exposing the entire network and Python API.
 
 **Running several TD apps?** Each bridge takes the first free port from **Port** to Port + **Port
-Range** (3031–3040 by default). The COMP's viewer shows the port it got and its **App Label**. Give
+Range** (3031–3040 by default). The COMP's viewer shows the port it got, its **App Label**, and the bridge version. Give
 each app a label so you can tell your agent which one to use.
 
 ### Step 2: Verify the Bridge Is Live

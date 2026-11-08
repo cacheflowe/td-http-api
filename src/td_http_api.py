@@ -4084,9 +4084,9 @@ _VIEWER_SIZE = 256
 _VIEWER_FONT = "'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif"
 
 
-def viewer_svg(logo_svg, port, label, size=_VIEWER_SIZE):
+def viewer_svg(logo_svg, port, label, size=_VIEWER_SIZE, version=VERSION):
 	"""The COMP viewer image as SVG text: the logo (any SVG; its viewBox is kept) above ':port' and
-	the app label."""
+	the app label, with the bridge version small in the top-right corner."""
 	s = size
 	m = re.search(r'<svg\b([^>]*)>(.*)</svg>', logo_svg or '', re.S | re.I)
 	logo = ''
@@ -4103,8 +4103,10 @@ def viewer_svg(logo_svg, port, label, size=_VIEWER_SIZE):
 	short = label if len(label) <= 20 else label[:19] + '…'
 	esc = _html.escape
 	port_text = f':{port}' if port else 'stopped'
+	version_text = (f'<text x="{s * 0.95:.0f}" y="{s * 0.09:.0f}" text-anchor="end" font-family="{_VIEWER_FONT}" '
+		f'font-size="{s * 0.065:.0f}" fill="#ffffff" fill-opacity="0.45">v{esc(version)}</text>') if version else ''
 	return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{s}" height="{s}" viewBox="0 0 {s} {s}">'
-		f'{logo}'
+		f'{logo}{version_text}'
 		f'<line x1="{s * 0.38:.0f}" y1="{s * 0.6:.0f}" x2="{s * 0.62:.0f}" y2="{s * 0.6:.0f}" stroke="#ffffff" '
 		f'stroke-opacity="0.35" stroke-width="{s / 128:.0f}" stroke-linecap="round"/>'
 		f'<text x="{s / 2:.0f}" y="{s * 0.77:.0f}" text-anchor="middle" font-family="{_VIEWER_FONT}" '
@@ -4162,7 +4164,7 @@ def _update_viewer(comp, port, label):
 	text.par.positionunit = 'pixels'
 	text.par.positiony = 10
 	short = label if len(label) <= 20 else label[:19] + '…'
-	text.par.text = f"{':' + str(port) if port else 'stopped'}\n{short}"
+	text.par.text = f"{':' + str(port) if port else 'stopped'}\n{short} · v{VERSION}"
 
 	over = comp.op('over_viewer') or comp.create(overTOP, 'over_viewer')
 	over.nodeX, over.nodeY = robot.nodeX + 150, robot.nodeY - 75

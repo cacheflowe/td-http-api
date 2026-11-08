@@ -6,6 +6,9 @@ heading and uses it for the GitHub release notes.
 
 ## Unreleased
 
+- **The COMP viewer shows the bridge version** (e.g. `v0.2.0`, small in the top-right corner), so you
+  can tell which release a project has without opening the parameters.
+
 ## v0.1.1 (2026-11-08)
 
 - **New agent doc, `td-process-testing`**, embedded and served at `/docs`. It covers when a TD

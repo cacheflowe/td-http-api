@@ -34,7 +34,7 @@ Note the packaged `.tox` embeds a *snapshot* of the callback code; the canonical
 
 ### Ports, labels and several running apps
 
-The COMP viewer shows the logo with `:port` and the label under it, rendered as SVG: `viewer_svg()` wraps the logo from the `text_logo_svg` DAT (any SVG; its viewBox is kept) and two `<text>` lines into one SVG, base64-encodes it as a `data:image/svg+xml;base64,…` URL and sets it on the `SVG` COMP's **File** par (Derivative's palette SVG component, whose Web Render TOP loads that URL); the COMP's Operator Viewer is `SVG/out_SVG`. `refresh_labels()` redoes it whenever the port or label changes. To change the logo, paste new SVG into `text_logo_svg` and pulse Restart (or change the Label). Without the `SVG` COMP or the logo DAT it falls back to the old Text TOPs (`text_robot`, `text_label`, `over_viewer`).
+The COMP viewer shows the logo with `:port` and the label under it, and the bridge version (`VERSION`) small in the top-right corner, rendered as SVG: `viewer_svg()` wraps the logo from the `text_logo_svg` DAT (any SVG; its viewBox is kept) and the `<text>` lines into one SVG, base64-encodes it as a `data:image/svg+xml;base64,…` URL and sets it on the `SVG` COMP's **File** par (Derivative's palette SVG component, whose Web Render TOP loads that URL); the COMP's Operator Viewer is `SVG/out_SVG`. `refresh_labels()` redoes it whenever the port or label changes. To change the logo, paste new SVG into `text_logo_svg` and pulse Restart (or change the Label). Without the `SVG` COMP or the logo DAT it falls back to the old Text TOPs (`text_robot`, `text_label`, `over_viewer`).
 The COMP's **TdHttpApi** page has these parameters, created by `setup_component()` in
 `td_http_api.py`:
 
