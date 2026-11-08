@@ -6,6 +6,18 @@ heading and uses it for the GitHub release notes.
 
 ## Unreleased
 
+- **Fix: a downloaded tox could fail to start properly.** The bridge's "restart pending" flag lives
+  in COMP storage, which is saved with the tox. If it shipped set, every copy skipped its startup:
+  the server still listened on the port saved in the tox, but never picked a free one, set Active
+  Port, or redrew its viewer. The flag is now a frame stamp that goes stale after 30 frames, and
+  `/export-release` leaves it out of the release.
+- **Fix: the COMP viewer has a black background and fills the frame in any project.** The palette
+  SVG component applies its background color and fit-to-size with JavaScript after load, which
+  didn't reliably run in a freshly loaded tox (transparent, or a small image in the corner). The
+  viewer SVG now paints its own background and scales to the Web Render TOP's resolution.
+- The release tox no longer ships the dev project's port and label in its viewer; it shows
+  "stopped" until the bridge starts.
+
 ## v0.2.0 (2026-11-08)
 
 - **The COMP viewer shows the bridge version** (e.g. `v0.2.0`, small in the top-right corner), so you

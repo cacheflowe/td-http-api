@@ -923,9 +923,16 @@ def _route_export_release(request, response, pars, webServerDAT, **_):
 	clear(getattr(comp.par, 'Activeport', None), 0)
 	clear(getattr(comp.par, 'Agentprompt', None), '(server not running)')
 	clear(getattr(comp.par, 'Version', None), VERSION)
+	# Per-session state that would otherwise ship: the viewer image (this app's port and label) and
+	# the restart-pending stamp in COMP storage.
+	pending = comp.fetch('_tdapi_restart_pending', None, search=False)
+	comp.unstore('_tdapi_restart_pending')
+	_update_viewer(comp, 0, '')
 	try:
 		comp.save(full, createFolders=True)
 	finally:
+		if pending is not None:
+			comp.store('_tdapi_restart_pending', pending)
 		for par, value in reversed(changed):
 			if par.name != 'Version':
 				par.val = value
@@ -4105,7 +4112,11 @@ def viewer_svg(logo_svg, port, label, size=_VIEWER_SIZE, version=VERSION):
 	port_text = f':{port}' if port else 'stopped'
 	version_text = (f'<text x="{s * 0.95:.0f}" y="{s * 0.09:.0f}" text-anchor="end" font-family="{_VIEWER_FONT}" '
 		f'font-size="{s * 0.065:.0f}" fill="#ffffff" fill-opacity="0.45">v{esc(version)}</text>') if version else ''
-	return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{s}" height="{s}" viewBox="0 0 {s} {s}">'
+	# Self-contained on purpose: the palette SVG COMP applies its background color and fit-to-size
+	# with JavaScript after load, which doesn't reliably run in a freshly loaded tox. So the image
+	# paints its own black background and fills the Web Render TOP at any resolution.
+	return (f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 {s} {s}">'
+		f'<rect x="0" y="0" width="{s}" height="{s}" fill="#000000"/>'
 		f'{logo}{version_text}'
 		f'<line x1="{s * 0.38:.0f}" y1="{s * 0.6:.0f}" x2="{s * 0.62:.0f}" y2="{s * 0.6:.0f}" stroke="#ffffff" '
 		f'stroke-opacity="0.35" stroke-width="{s / 128:.0f}" stroke-linecap="round"/>'
@@ -4197,9 +4208,12 @@ def start_server(comp):
 	"""Restart the bridge on the first free port in [Port, Port + Portrange). Deferred a frame at
 	a time so it's safe to call from inside a request on this same server. onStart and onCreate
 	both fire at project start, so a restart already pending absorbs the second call."""
-	if comp.fetch('_tdapi_restart_pending', False, search=False):
+	# A frame stamp, not a bool: storage is saved with the COMP, so a flag left set in a saved tox
+	# (or by a restart that died) must not block every later start. Only a recent one counts.
+	pending = comp.fetch('_tdapi_restart_pending', None, search=False)
+	if isinstance(pending, int) and not isinstance(pending, bool) and 0 <= absTime.frame - pending < 30:
 		return
-	comp.store('_tdapi_restart_pending', True)
+	comp.store('_tdapi_restart_pending', absTime.frame)
 	run(lambda: _stop_then_pick(comp), delayFrames=1)
 
 
