@@ -6,6 +6,8 @@ heading and uses it for the GitHub release notes.
 
 ## Unreleased
 
+## v0.2.0 (2026-11-08)
+
 - **The COMP viewer shows the bridge version** (e.g. `v0.2.0`, small in the top-right corner), so you
   can tell which release a project has without opening the parameters.
 
