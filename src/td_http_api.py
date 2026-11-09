@@ -12,7 +12,7 @@ import shutil
 
 # The bridge's release version: shown in /server-info, MCP serverInfo, the Version par, release file
 # names. scripts/release.py bumps it; edit it nowhere else.
-VERSION = '0.2.0'
+VERSION = '0.2.1'
 
 # ---------------------------------------------------------------------------
 # Network description (self-contained - no td_util dependency, so this file
@@ -3946,6 +3946,16 @@ PAR_HELP = {
 }
 
 
+def _child_or_create(comp, op_type, name, x, y):
+	"""comp's child `name`, created at (x, y) if missing. An existing node keeps its position: this
+	runs on every export and restart, and must never rearrange the developer's layout."""
+	node = comp.op(name)
+	if node is None:
+		node = comp.create(op_type, name)
+		node.nodeX, node.nodeY = x, y
+	return node
+
+
 def setup_component(comp, dev=None):
 	"""Create (or update) the bridge COMP's custom pars and its startup DATs. Idempotent.
 	dev: include Save Tox With Project and its post-save hook, which only make sense while developing
@@ -3994,8 +4004,7 @@ def setup_component(comp, dev=None):
 	page.sort(*[n for n in ('Label', 'Port', 'Portrange', 'Restart', 'Activeport', 'Agentprompt', 'Copyprompt',
 		'Opendashboard', 'Printlogs', 'Savetoxwithproject', 'Version') if getattr(comp.par, n, None) is not None])
 
-	html = comp.op('dashboard_html') or comp.create(textDAT, 'dashboard_html')
-	html.nodeX, html.nodeY = 300, -300
+	html = _child_or_create(comp, textDAT, 'dashboard_html', 300, -300)
 	# While developing, the page is file-synced next to the route code (the saved .tox embeds the
 	# text). Never override a file the developer already set; an embedded copy with no synced
 	# route file keeps its embedded page.
@@ -4029,7 +4038,7 @@ def setup_component(comp, dev=None):
 	# The startup DATs call into this module by the route-code DAT's actual name.
 	cb = _callbacks_dat(comp)
 	mod = f"op('{cb.name if cb is not None else 'td_http_api'}').module"
-	start = comp.op('execute_start') or comp.create(executeDAT, 'execute_start')
+	start = _child_or_create(comp, executeDAT, 'execute_start', -150, 0)
 	start.text = (
 		"# Pick a free port and start the bridge -- see td_http_api.py start_server()\n"
 		f"def onStart():\n\t{mod}.start_server(parent())\n\n"
@@ -4044,8 +4053,7 @@ def setup_component(comp, dev=None):
 	start.par.create = True
 	if getattr(start.par, 'projectpostsave', None) is not None:	# builds before project save callbacks lack it
 		start.par.projectpostsave = dev
-	start.nodeX, start.nodeY = -150, 0
-	pe = comp.op('parexec_server') or comp.create(parameterexecuteDAT, 'parexec_server')
+	pe = _child_or_create(comp, parameterexecuteDAT, 'parexec_server', -150, -100)
 	pe.text = (
 		"# Port changes restart the bridge; Label only updates the viewer/prompt\n"
 		"def onValueChange(par, prev):\n"
@@ -4064,7 +4072,6 @@ def setup_component(comp, dev=None):
 	pe.par.builtin = False
 	pe.par.valuechange = True
 	pe.par.onpulse = True
-	pe.nodeX, pe.nodeY = -150, -100
 
 	for name, text in PAR_HELP.items():
 		par = getattr(comp.par, name, None)
@@ -4163,8 +4170,7 @@ def _update_viewer(comp, port, label):
 	robot.par.positionunit = 'pixels'
 	robot.par.positiony = 30	# leave the bottom third for the label
 
-	text = comp.op('text_label') or comp.create(textTOP, 'text_label')
-	text.nodeX, text.nodeY = robot.nodeX, robot.nodeY - 150
+	text = _child_or_create(comp, textTOP, 'text_label', robot.nodeX, robot.nodeY - 150)
 	text.par.resolutionw, text.par.resolutionh = robot.width or 256, robot.height or 256
 	text.par.bgalpha = 0
 	text.par.fontautosize = 'off'
@@ -4177,8 +4183,7 @@ def _update_viewer(comp, port, label):
 	short = label if len(label) <= 20 else label[:19] + '…'
 	text.par.text = f"{':' + str(port) if port else 'stopped'}\n{short} · v{VERSION}"
 
-	over = comp.op('over_viewer') or comp.create(overTOP, 'over_viewer')
-	over.nodeX, over.nodeY = robot.nodeX + 150, robot.nodeY - 75
+	over = _child_or_create(comp, overTOP, 'over_viewer', robot.nodeX + 150, robot.nodeY - 75)
 	over.inputConnectors[0].connect(text)
 	over.inputConnectors[1].connect(robot)
 	comp.par.opviewer = over

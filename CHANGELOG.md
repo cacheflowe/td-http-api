@@ -6,6 +6,12 @@ heading and uses it for the GitHub release notes.
 
 ## Unreleased
 
+## v0.2.1 (2026-11-08)
+
+- **Fix: exports and restarts no longer rearrange the nodes inside the bridge COMP.**
+  `setup_component()`, which `/export-release` runs on every release, moved `execute_start`,
+  `parexec_server` and `dashboard_html` back to hard-coded spots each time. Nodes are now placed
+  only when they're created.
 - **Fix: a downloaded tox could fail to start properly.** The bridge's "restart pending" flag lives
   in COMP storage, which is saved with the tox. If it shipped set, every copy skipped its startup:
   the server still listened on the port saved in the tox, but never picked a free one, set Active
