@@ -6,6 +6,12 @@ heading and uses it for the GitHub release notes.
 
 ## Unreleased
 
+## v0.2.2 (2026-11-09)
+
+- The COMP viewer is now a rebrandable 16:13 SVG card with dynamic app and port rows, and
+  `/docs?name=td-app-icon` gives agents a reusable guide for creating the same layout in other
+  TouchDesigner projects.
+
 ## v0.2.1 (2026-11-08)
 
 - **Fix: exports and restarts no longer rearrange the nodes inside the bridge COMP.**
