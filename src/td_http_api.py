@@ -4094,55 +4094,87 @@ def refresh_labels(comp):
 	_update_viewer(comp, port, label)
 
 
-_VIEWER_SIZE = 256
+_VIEWER_WIDTH = 320
+_VIEWER_HEIGHT = 260
+_VIEWER_SIZE = _VIEWER_HEIGHT
 _VIEWER_FONT = "'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif"
+_VIEWER_PRODUCT = 'td-http-api'
+_VIEWER_COLORS = {
+	'background': '#090D10',
+	'surface': '#11191D',
+	'surface_border': '#243239',
+	'text': '#F2F5F4',
+	'muted': '#91A0A5',
+	'accent': '#48D7C2',
+}
 
 
 def viewer_svg(logo_svg, port, label, size=_VIEWER_SIZE, version=VERSION):
-	"""The COMP viewer image as SVG text: the logo (any SVG; its viewBox is kept) above ':port' and
-	the app label, with the bridge version small in the top-right corner."""
+	"""Render the compact, rebrandable bridge card. The logo is supplied separately; product/version
+	identify the tool, while App and Port describe this running instance."""
 	s = size
+	w = s * _VIEWER_WIDTH / _VIEWER_HEIGHT
 	m = re.search(r'<svg\b([^>]*)>(.*)</svg>', logo_svg or '', re.S | re.I)
 	logo = ''
 	if m:
 		vb = re.search(r'viewBox\s*=\s*"([^"]+)"', m.group(1))
+		fill = re.search(r'\bfill\s*=\s*"([^"]*)"', m.group(1), re.I)
+		fill_attr = f' fill="{_html.escape(fill.group(1), quote=True)}"' if fill else ''
 		if vb is None:	# fall back to width/height for a logo without a viewBox
 			w = re.search(r'\bwidth\s*=\s*"([\d.]+)', m.group(1))
 			h = re.search(r'\bheight\s*=\s*"([\d.]+)', m.group(1))
 			view_box = f'0 0 {w.group(1) if w else 100} {h.group(1) if h else 100}'
 		else:
 			view_box = vb.group(1)
-		logo = (f'<svg x="{s * 0.2:.0f}" y="{s * 0.13:.0f}" width="{s * 0.6:.0f}" height="{s * 0.36:.0f}" '
-			f'viewBox="{view_box}" preserveAspectRatio="xMidYMid meet">{m.group(2)}</svg>')
+		logo = (f'<svg x="{w * 0.14:.0f}" y="{s * 0.025:.0f}" width="{w * 0.72:.0f}" height="{s * 0.46:.0f}" '
+			f'viewBox="{view_box}" preserveAspectRatio="xMidYMid meet"{fill_attr}>{m.group(2)}</svg>')
 	short = label if len(label) <= 20 else label[:19] + '…'
 	esc = _html.escape
-	port_text = f':{port}' if port else 'stopped'
-	version_text = (f'<text x="{s * 0.95:.0f}" y="{s * 0.09:.0f}" text-anchor="end" font-family="{_VIEWER_FONT}" '
-		f'font-size="{s * 0.065:.0f}" fill="#ffffff" fill-opacity="0.45">v{esc(version)}</text>') if version else ''
+	c = _VIEWER_COLORS
+	port_text = str(port) if port else 'stopped'
+	version_text = (f'<tspan fill="{c["accent"]}" font-size="{s * 0.052:.0f}" font-weight="500" '
+		f'dx="{s * 0.025:.0f}">v{esc(version)}</tspan>') if version else ''
+	rows = []
+	for y, key, value, value_color in (
+		(s * 0.76, 'App:', short, c['text']),
+		(s * 0.89, 'Port:', port_text, c['accent']),
+	):
+		rows.append(
+			f'<rect x="{w * 0.07:.0f}" y="{y - s * 0.0525:.1f}" width="{w * 0.86:.0f}" height="{s * 0.105:.0f}" '
+			f'rx="{s * 0.025:.1f}" fill="{c["surface"]}" stroke="{c["surface_border"]}" stroke-width="{s / 256:.1f}"/>'
+			f'<rect x="{w * 0.07:.0f}" y="{y - s * 0.032:.1f}" width="{w * 0.012:.0f}" height="{s * 0.064:.0f}" '
+			f'rx="{s * 0.006:.1f}" fill="{c["accent"]}"/>'
+			f'<text x="{w * 0.12:.0f}" y="{y + s * 0.016:.1f}" font-family="{_VIEWER_FONT}" '
+			f'font-size="{s * 0.047:.1f}" fill="{c["muted"]}">{key}</text>'
+			f'<text x="{w * 0.30:.0f}" y="{y + s * 0.016:.1f}" font-family="{_VIEWER_FONT}" '
+			f'font-size="{s * 0.052:.1f}" font-weight="600" fill="{value_color}">{esc(value)}</text>'
+		)
 	# Self-contained on purpose: the palette SVG COMP applies its background color and fit-to-size
 	# with JavaScript after load, which doesn't reliably run in a freshly loaded tox. So the image
-	# paints its own black background and fills the Web Render TOP at any resolution.
-	return (f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 {s} {s}">'
-		f'<rect x="0" y="0" width="{s}" height="{s}" fill="#000000"/>'
-		f'{logo}{version_text}'
-		f'<line x1="{s * 0.38:.0f}" y1="{s * 0.6:.0f}" x2="{s * 0.62:.0f}" y2="{s * 0.6:.0f}" stroke="#ffffff" '
-		f'stroke-opacity="0.35" stroke-width="{s / 128:.0f}" stroke-linecap="round"/>'
-		f'<text x="{s / 2:.0f}" y="{s * 0.77:.0f}" text-anchor="middle" font-family="{_VIEWER_FONT}" '
-		f'font-size="{s * 0.14:.0f}" font-weight="600" fill="#ffffff">{esc(port_text)}</text>'
-		f'<text x="{s / 2:.0f}" y="{s * 0.9:.0f}" text-anchor="middle" font-family="{_VIEWER_FONT}" '
-		f'font-size="{s * 0.095:.0f}" fill="#ffffff" fill-opacity="0.7">{esc(short)}</text>'
+	# paints its own background and fills the Web Render TOP at any resolution.
+	return (f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 {w:.0f} {s}">'
+		f'<rect x="0" y="0" width="{w:.0f}" height="{s}" fill="{c["background"]}"/>'
+		f'{logo}'
+		f'<text x="{w / 2:.0f}" y="{s * 0.605:.0f}" text-anchor="middle" font-family="{_VIEWER_FONT}" '
+		f'font-size="{s * 0.069:.1f}" font-weight="650" fill="{c["text"]}">{_VIEWER_PRODUCT}{version_text}</text>'
+		f'<line x1="{w * 0.07:.0f}" y1="{s * 0.665:.0f}" x2="{w * 0.93:.0f}" y2="{s * 0.665:.0f}" '
+		f'stroke="{c["surface_border"]}" stroke-width="{s / 256:.1f}"/>'
+		f'{"".join(rows)}'
 		'</svg>')
 
 
 def _update_svg_viewer(comp, port, label):
-	"""Point the COMP viewer at the SVG renderer (the palette SVG COMP named 'SVG', whose Web Render
-	TOP loads its File par) with the logo from text_logo_svg plus port and label, as a base64 data
-	URL. Returns False when either piece is missing, so the caller falls back to the Text TOPs."""
+	"""Point the COMP viewer at the SVG renderer with the replaceable logo and brand/session card.
+	Returns False when either piece is missing, so the caller falls back to the Text TOPs."""
 	svg_comp, logo = comp.op('SVG'), comp.op('text_logo_svg')
 	if svg_comp is None or logo is None or getattr(svg_comp.par, 'File', None) is None:
 		return False
 	data = base64.b64encode(viewer_svg(logo.text, port, label).encode('utf-8')).decode('ascii')
 	url = f'data:image/svg+xml;base64,{data}'
+	for par_name, value in (('Outputresolution1', _VIEWER_WIDTH * 2), ('Outputresolution2', _VIEWER_HEIGHT * 2)):
+		par = getattr(svg_comp.par, par_name, None)
+		if par is not None and par.eval() != value:
+			par.val = value
 	if svg_comp.par.File.eval() != url:
 		svg_comp.par.File = url
 	out = svg_comp.op('out_SVG') or svg_comp
@@ -4152,8 +4184,7 @@ def _update_svg_viewer(comp, port, label):
 
 
 def _update_viewer(comp, port, label):
-	"""COMP viewer: the SVG logo + ':port' + label when the SVG renderer is present, else a big robot
-	(text_robot) with a small ':port' + label (text_label) laid over it by over_viewer."""
+	"""COMP viewer: the SVG brand card when available, else the older Text TOP composition."""
 	if _update_svg_viewer(comp, port, label):
 		return
 	robot = comp.op('text_robot')
