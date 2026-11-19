@@ -84,6 +84,7 @@ restart, or to test something in a throwaway TD process, see the **`td-process-t
 - **Build:**
   - `/build`: ops, params, connections and auto layout in one call, safe to retry. Use it for anything over two nodes.
   - Also `/create`, `/insert` (splice into a wire), `/wire`, `/duplicate`, `/move`, `/delete`.
+  - `/tidy`: after you create, wire or move ops, tidy the network so it reads left to right with helper DATs under their ops. Scope it with `paths=` in a network I arranged by hand, and skip it if I've asked you to keep my layout.
 - **Document:** `/comment`, `/annotate`
 - **Collaborate:** `/selected` (read what I clicked in the UI), `/select` (highlight nodes + home my editor to direct my attention)
 - **Power tools:** `/run` (arbitrary TD Python, for anything the routes above can't do), `/diff` (structural diff of two `/network` snapshots)

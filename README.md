@@ -79,6 +79,10 @@ copy one to `~/.claude/skills/<name>/SKILL.md` (every project) or `<project>/.cl
 (one project). Other agents (Codex, Copilot, Cursor) have their own folders for skills or
 instructions; the files work there as-is.
 
+Your own project's agent docs don't need copying either: the bridge's `/context` route finds
+instruction files, skills and rules in every common harness layout in the TD project's folder (and up
+to its repo root), plus README-style DATs inside the `.toe`, and the start-up prompt lists them.
+
 (`skills/td-agent-init.md` is the start-up prompt the COMP's **Copy Prompt** button gives you, not a
 skill to install.)
 

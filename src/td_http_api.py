@@ -1,5 +1,8 @@
+import glob
+import hashlib
 import io
 import json
+import math
 import os
 import re
 import sys
@@ -542,6 +545,75 @@ def _auto_place(parent, inputs, exclude=None, width=130, height=90, pad_x=70, pa
 	return x, y
 
 
+# ---------------------------------------------------------------------------
+# Overlap guard: a new op must never land on top of an existing one (a bare COMP.create() puts it
+# at 0,0, often right on the bridge COMP). Routes that can create ops snapshot the op ids first;
+# afterwards each new op that overlaps a sibling is moved down to the first free spot.
+# ---------------------------------------------------------------------------
+
+_NEW_OP_ROUTES = {'/create', '/build', '/insert', '/duplicate', '/run'}
+
+
+def _user_roots():
+	return [c for c in op('/').children if c.name not in ('sys', 'ui', 'local')]
+
+
+def _op_ids():
+	ids = set()
+	for r in _user_roots():
+		ids.add(r.id)
+		ids.update(o.id for o in r.findChildren())
+	return ids
+
+
+def _new_ops_since(before):
+	return [o for r in _user_roots() for o in [r] + list(r.findChildren()) if o.id not in before]
+
+
+def _tile_box(n):
+	"""(x, y, w, h) around an op and its docked ops, which move with it."""
+	tiles = [n] + [d for d in (getattr(n, 'docked', None) or []) if d.valid]
+	x0, y0 = min(t.nodeX for t in tiles), min(t.nodeY for t in tiles)
+	x1 = max(t.nodeX + t.nodeWidth for t in tiles)
+	y1 = max(t.nodeY + t.nodeHeight for t in tiles)
+	return x0, y0, x1 - x0, y1 - y0
+
+
+def _unstack(new_ops, gap=30):
+	"""Move each new op (with its docked ops) straight down until it overlaps nothing. Returns
+	[{path, from, to}] for the ops it moved."""
+	new_set = {o for o in new_ops if o.valid}
+	settled, moved = set(), []
+	for n in sorted(new_set, key=lambda o: o.id):
+		if getattr(n, 'dock', None) is not None or n.OPType == 'annotateCOMP' or n.parent() is None:
+			continue
+		own = {n} | set(getattr(n, 'docked', None) or [])
+		obstacles = [s for s in _nodes_in_comp(n.parent()) if s not in own and s.OPType != 'annotateCOMP'
+			and (s not in new_set or s in settled or (getattr(s, 'dock', None) is not None and s.dock in settled))]
+		x, y, w, h = _tile_box(n)
+		dy, tries = 0, 0
+		while tries < 80 and any(_rects_overlap(x, y - dy, w, h, s) for s in obstacles):
+			dy += h + gap
+			tries += 1
+		settled.add(n)
+		if dy:
+			start = (n.nodeX, n.nodeY)
+			_move_node(n, n.nodeX, n.nodeY - dy)
+			moved.append({'path': n.path, 'from': [round(start[0]), round(start[1])], 'to': [round(n.nodeX), round(n.nodeY)]})
+	return moved
+
+
+def _add_to_response(response, key, value):
+	"""Add a key to a JSON object response after the route wrote it."""
+	try:
+		data = json.loads(response.get('data') or 'null')
+	except ValueError:
+		return
+	if isinstance(data, dict):
+		data[key] = value
+		response['data'] = json.dumps(data, default=str)
+
+
 def _require_write_method(request, uri):
 	if request['method'] not in ('POST', 'PUT'):
 		raise MethodNotAllowedError(f"{uri} requires POST or PUT")
@@ -789,6 +861,7 @@ def _route_insert(request, response, pars, **_):
 		current_inputs.append(c[0].owner if c else None)
 	current_inputs[input_index] = new_node
 	dest.setInputs(current_inputs)
+	_touch(new_node)
 	_ok_json(response, {
 		'inserted': _node_summary(new_node),
 		'source': src.path if src else None,
@@ -1061,6 +1134,7 @@ def _route_server_info(request, response, pars, webServerDAT, **_):
 		'callbacksSyncFile': (cb.par.syncfile.eval() if cb is not None and hasattr(cb.par, 'syncfile') else None),
 	}
 	info['version'] = VERSION
+	info['layoutMode'] = _layout_mode(comp)
 	info['environment'], info['warnings'] = _environment()
 	_ok_json(response, info)
 
@@ -1310,6 +1384,304 @@ def _route_docs(request, response, pars, webServerDAT, **_):
 		text = n.csv if n.isTable else n.text
 		sections.append(f"<!-- ===== {n.name} ===== -->\n\n{text}")
 	_ok_text(response, '\n\n---\n\n'.join(sections))
+
+
+# ---------------------------------------------------------------------------
+# /context: the project's own agent docs. An agent's harness loads instructions and skills from
+# the folder it was started in, which often isn't the TD project's folder (or there is none, over
+# MCP). The bridge knows project.folder, so it indexes what's there in every harness's format, plus
+# README-style DATs inside the .toe, and serves them on demand. Read-only; nothing is cached to disk.
+# ---------------------------------------------------------------------------
+
+# (glob relative to a root, kind, harness). Order = priority when the same text is in two places.
+_CONTEXT_PATTERNS = (
+	('AGENTS.md', 'instructions', 'agents'),
+	('AGENT.md', 'instructions', 'agents'),
+	('CLAUDE.md', 'instructions', 'claude'),
+	('CLAUDE.local.md', 'instructions', 'claude'),
+	('.claude/CLAUDE.md', 'instructions', 'claude'),
+	('GEMINI.md', 'instructions', 'gemini'),
+	('CONVENTIONS.md', 'instructions', 'aider'),
+	('.github/copilot-instructions.md', 'instructions', 'copilot'),
+	('.cursorrules', 'instructions', 'cursor'),
+	('.windsurfrules', 'instructions', 'windsurf'),
+	('.clinerules', 'instructions', 'cline'),
+	('.junie/guidelines.md', 'instructions', 'junie'),
+	('.ai/AGENTS.md', 'instructions', 'ai'),
+	('.claude/skills/*/SKILL.md', 'skill', 'claude'),
+	('.agents/skills/*/SKILL.md', 'skill', 'agents'),
+	('.codex/skills/*/SKILL.md', 'skill', 'codex'),
+	('.github/skills/*/SKILL.md', 'skill', 'copilot'),
+	('.cursor/skills/*/SKILL.md', 'skill', 'cursor'),
+	('.opencode/skills/*/SKILL.md', 'skill', 'opencode'),
+	('.ai/skills/*/SKILL.md', 'skill', 'ai'),
+	('.ai/skills/*.md', 'skill', 'ai'),
+	('skills/*/SKILL.md', 'skill', 'agents'),
+	('.github/instructions/*.instructions.md', 'rule', 'copilot'),
+	('.cursor/rules/*.mdc', 'rule', 'cursor'),
+	('.cursor/rules/*/*.mdc', 'rule', 'cursor'),
+	('.windsurf/rules/*.md', 'rule', 'windsurf'),
+	('.clinerules/*.md', 'rule', 'cline'),
+	('.roo/rules/*.md', 'rule', 'roo'),
+	('.roo/rules-*/*.md', 'rule', 'roo'),
+	('.kiro/steering/*.md', 'rule', 'kiro'),
+	('.continue/rules/*.md', 'rule', 'continue'),
+	('.trae/rules/*.md', 'rule', 'trae'),
+	('.claude/commands/*.md', 'prompt', 'claude'),
+	('.claude/agents/*.md', 'agent', 'claude'),
+	('.github/prompts/*.prompt.md', 'prompt', 'copilot'),
+	('.github/agents/*.md', 'agent', 'copilot'),
+	('.codex/prompts/*.md', 'prompt', 'codex'),
+	('.gemini/commands/*.toml', 'prompt', 'gemini'),
+	('.opencode/command/*.md', 'prompt', 'opencode'),
+	('.opencode/agent/*.md', 'agent', 'opencode'),
+	('.ai/prompts/*.md', 'prompt', 'ai'),
+	('.ai/docs/*.md', 'doc', 'ai'),
+)
+# Fuzzy pass: any folder with one of these names (leading dot ignored) is treated as agent docs.
+_CONTEXT_DIR_KINDS = {
+	'skills': 'skill', 'skill': 'skill', 'rules': 'rule', 'steering': 'rule', 'instructions': 'rule',
+	'prompts': 'prompt', 'commands': 'prompt', 'command': 'prompt', 'agents': 'agent', 'agent': 'agent',
+	'agent-docs': 'doc', 'agent_docs': 'doc', 'ai-docs': 'doc', 'ai': 'doc',
+}
+_CONTEXT_EXTS = ('.md', '.mdc', '.markdown', '.txt', '.toml')
+_CONTEXT_SKIP_DIRS = {'.git', 'node_modules', 'backup', 'build', 'dist', 'venv', '.venv', 'env', '__pycache__',
+	'site-packages', '.idea', 'library', 'cache', '.cache', 'out', 'bin', 'obj', 'target', '.next', 'vendor'}
+_CONTEXT_MAX_DOCS = 300
+_CONTEXT_MAX_BYTES = 256 * 1024
+_CONTEXT_FUZZY_DEPTH = 3
+_CONTEXT_DAT_NAME = re.compile(r'^(readme|agents?|claude|skill|agent_?notes?|ai_?notes?|notes_?(for_)?agents?)(\d+|_.*)?$', re.I)
+_CONTEXT_DAT_TAGS = {'agentdoc', 'agent-doc', 'agent_doc', 'agentdocs'}
+_CONTEXT_CACHE = {}	# 'files' -> (time, roots, docs): rescans at most every few seconds
+
+
+def _context_roots():
+	"""The project folder, then each parent up to the repo root (a folder with .git), at most 3
+	levels up, so a .toe in a subfolder of a repo still finds the repo's agent docs."""
+	folder = os.path.normpath(project.folder)
+	roots = [folder]
+	cur = folder
+	for _ in range(3):
+		if os.path.exists(os.path.join(cur, '.git')):
+			return roots
+		parent = os.path.dirname(cur)
+		if not parent or parent == cur:
+			break
+		cur = parent
+		roots.append(cur)
+	return roots if os.path.exists(os.path.join(cur, '.git')) else [folder]
+
+
+def _front_matter(text):
+	"""(meta dict, body) from a leading --- YAML block (flat key: value lines only)."""
+	m = re.match(r'\A﻿?---[ \t]*\r?\n(.*?)\r?\n---[ \t]*\r?\n', text, re.S)
+	if not m:
+		return {}, text
+	meta = {}
+	for line in m.group(1).splitlines():
+		key, sep, val = line.partition(':')
+		if sep and key and not key[0].isspace():
+			meta[key.strip()] = val.strip().strip('"\'')
+	return meta, text[m.end():]
+
+
+def _first_line_summary(body):
+	for line in body.splitlines():
+		line = line.strip().lstrip('#').strip()
+		if line and not line.startswith(('<!--', '```', '---')):
+			return line[:200]
+	return ''
+
+
+def _context_doc(path, top, kind, harness, matched_by):
+	try:
+		size = os.path.getsize(path)
+		with open(path, encoding='utf-8', errors='replace') as f:
+			text = f.read(_CONTEXT_MAX_BYTES)
+	except OSError:
+		return None
+	meta, body = _front_matter(text)
+	base = os.path.basename(path)
+	if base.upper() == 'SKILL.MD':
+		default_name = os.path.basename(os.path.dirname(path))
+	else:
+		default_name = re.sub(r'(\.instructions|\.prompt)?\.(md|mdc|markdown|txt|toml)$', '', base, flags=re.I).lstrip('.')
+	rel = os.path.relpath(path, top).replace('\\', '/')
+	doc = {
+		'name': meta.get('name') or default_name,
+		'kind': kind,
+		'harness': harness,
+		'path': rel,
+		'description': meta.get('description') or _first_line_summary(body),
+		'bytes': size,
+		'matchedBy': matched_by,
+	}
+	for key in ('alwaysApply', 'globs', 'applyTo'):
+		if meta.get(key):
+			doc[key] = meta[key]
+	if size > _CONTEXT_MAX_BYTES:
+		doc['truncated'] = True
+	return doc, hashlib.sha1(body.strip().encode('utf-8', 'replace')).hexdigest()
+
+
+def _context_scan(refresh=False):
+	"""(roots, docs): the project's agent docs from known harness locations, then a fuzzy pass over
+	folders named like skills/rules/prompts. Same text in two places is listed once, with alsoAt."""
+	cached = _CONTEXT_CACHE.get('files')
+	if cached and not refresh and time.time() - cached[0] < 5 and cached[1] == _context_roots():
+		return cached[1], cached[2]
+	roots = _context_roots()
+	top = roots[-1]
+	docs, by_hash, seen = [], {}, set()
+
+	def add(path, kind, harness, matched_by):
+		real = os.path.normcase(os.path.realpath(path))
+		if real in seen or len(docs) >= _CONTEXT_MAX_DOCS or not os.path.isfile(path):
+			return
+		seen.add(real)
+		made = _context_doc(path, top, kind, harness, matched_by)
+		if made is None:
+			return
+		doc, digest = made
+		if digest in by_hash:
+			by_hash[digest].setdefault('alsoAt', []).append(doc['path'])
+			return
+		by_hash[digest] = doc
+		docs.append(doc)
+
+	for root in roots:
+		for pattern, kind, harness in _CONTEXT_PATTERNS:
+			for path in sorted(glob.glob(os.path.join(root, pattern))):
+				add(path, kind, harness, 'known')
+	# Fuzzy pass from the top root: folders named skills/rules/prompts/... up to the depth limit
+	# (files in them, up to two levels down), plus any SKILL.md. A skill folder's other files are
+	# its own references, not separate docs.
+	skill_dirs = []
+	for dirpath, dirnames, filenames in os.walk(top):
+		rel = os.path.relpath(dirpath, top).replace('\\', '/')
+		rel_parts = [] if rel == '.' else rel.split('/')
+		dirnames[:] = [d for d in dirnames if d.lower() not in _CONTEXT_SKIP_DIRS
+			and len(rel_parts) < _CONTEXT_FUZZY_DEPTH + 2]
+		if any(fn.upper() == 'SKILL.MD' for fn in filenames):
+			skill_dirs.append(dirpath + os.sep)
+			add(os.path.join(dirpath, next(fn for fn in filenames if fn.upper() == 'SKILL.MD')), 'skill', 'unknown', 'fuzzy')
+			continue
+		if any((dirpath + os.sep).startswith(s) for s in skill_dirs):
+			continue
+		kind = None
+		for i, part in enumerate(rel_parts):
+			k = _CONTEXT_DIR_KINDS.get(part.lower().lstrip('.'))
+			if k and i <= _CONTEXT_FUZZY_DEPTH and len(rel_parts) - i <= 3:
+				kind = k
+		if kind:
+			for fn in sorted(filenames):
+				if fn.lower().endswith(_CONTEXT_EXTS):
+					add(os.path.join(dirpath, fn), kind, 'unknown', 'fuzzy')
+		if len(docs) >= _CONTEXT_MAX_DOCS:
+			break
+	order = {'instructions': 0, 'rule': 1, 'skill': 2, 'agent': 3, 'prompt': 4, 'doc': 5}
+	docs.sort(key=lambda d: (order.get(d['kind'], 9), d['path'].count('/'), d['path'].lower()))
+	_CONTEXT_CACHE['files'] = (time.time(), roots, docs)
+	return roots, docs
+
+
+def _context_dats(bridge):
+	"""README-style DATs inside the project (names like README, AGENTS, agent_notes, or tagged
+	'agentdoc'), outside the bridge itself. They travel with a COMP when it's reused as a tox."""
+	found = []
+	for root_name in ('/project1',) + tuple(c.path for c in op('/').children if c.path not in ('/project1', '/sys', '/ui', '/local')):
+		root = op(root_name)
+		if root is None:
+			continue
+		for d in root.findChildren(key=lambda o: o.isDAT and bool(_CONTEXT_DAT_NAME.match(o.name)
+				or _CONTEXT_DAT_TAGS & {t.lower() for t in o.tags})):
+			if d.path == bridge.path or d.path.startswith(bridge.path + '/') or d.isTable:
+				continue
+			text = d.text or ''
+			if not text.strip():
+				continue
+			meta, body = _front_matter(text)
+			found.append({
+				'name': meta.get('name') or d.name,
+				'kind': 'dat',
+				'path': d.path,
+				'owner': d.parent().path,
+				'description': meta.get('description') or _first_line_summary(body),
+				'bytes': len(text),
+			})
+			if len(found) >= 100:
+				return found
+	return found
+
+
+def _context_index(bridge, refresh=False):
+	roots, docs = _context_scan(refresh)
+	return {
+		'projectFolder': project.folder,
+		'roots': [r.replace('\\', '/') for r in roots],
+		'docs': docs,
+		'dats': _context_dats(bridge),
+	}
+
+
+def context_summary(bridge, limit=25):
+	"""A few lines for /init and the MCP instructions: what project docs exist, or '' if none."""
+	try:
+		idx = _context_index(bridge)
+	except Exception as e:
+		print(f'[td_http_api] context scan failed: {e}')
+		return ''
+	entries = idx['docs'] + idx['dats']
+	if not entries:
+		return ''
+	lines = []
+	for d in entries[:limit]:
+		where = d['path']
+		desc = d.get('description') or ''
+		desc = f" — {desc[:107] + '...' if len(desc) > 110 else desc}" if desc else ''
+		lines.append(f"- `{d['name']}` ({d['kind']}, {where}){desc}")
+	if len(entries) > limit:
+		lines.append(f'- ...and {len(entries) - limit} more (see /context)')
+	return '\n'.join(lines)
+
+
+def _route_context(request, response, pars, webServerDAT, **_):
+	"""This project's own agent docs: instruction files, skills, rules and prompts in every common
+	harness's layout (AGENTS.md, CLAUDE.md, .claude/skills, .cursor/rules, .github/copilot-
+	instructions.md, .windsurf, .clinerules, .kiro, GEMINI.md, ...) found in the TD project folder or
+	up to its repo root, plus a fuzzy pass over folders named skills/rules/prompts, plus README-style
+	DATs inside the .toe. No args: the index (name, kind, harness, path, description). name= or
+	path= returns one doc's text. Read the ones relevant to your task; skip any your harness already
+	loaded. Project docs take precedence over the bridge's generic guidance."""
+	bridge = webServerDAT.parent()
+	name = _first_param(pars, 'name')
+	path = _first_param(pars, 'path')
+	idx = _context_index(bridge, refresh=_bool_param(pars, 'refresh'))
+	if not name and not path:
+		_ok_json(response, idx)
+		return
+	entries = idx['docs'] + idx['dats']
+	if path:
+		want = path if path.startswith('/') else re.sub(r'^(\./)+', '', path.replace('\\', '/'))
+		matches = [d for d in entries if d['path'] == want or want in d.get('alsoAt', [])]
+	else:
+		norm = lambda s: re.sub(r'[-_\s]+', '-', s.strip().lower())
+		matches = [d for d in entries if norm(d['name']) == norm(name)]
+	if not matches:
+		raise BridgeError(f"no project doc {'at' if path else 'named'} '{path or name}'", code='doc_not_found',
+			suggestions=_suggest(path or name, [d['path' if path else 'name'] for d in entries]) or None)
+	if len(matches) > 1:
+		raise BridgeError(f"'{name}' matches {len(matches)} docs; pass path= instead", code='ambiguous',
+			candidates=[d['path'] for d in matches])
+	doc = matches[0]
+	if doc['kind'] == 'dat':
+		d = op(doc['path'])
+		text = d.text if d is not None else ''
+	else:
+		full = os.path.join(idx['roots'][-1], doc['path'])
+		with open(full, encoding='utf-8', errors='replace') as f:
+			text = f.read(_CONTEXT_MAX_BYTES)
+	_ok_text(response, text)
 
 
 # ---------------------------------------------------------------------------
@@ -2110,6 +2482,41 @@ _SCHEMA_OVERRIDES = {
 			'limit': {'type': 'integer', 'required': False, 'default': 100},
 		},
 		'response': {'type': 'object', 'shape': {'root': 'string', 'count': 'integer', 'truncated': 'boolean', 'matches': 'array<object>'}},
+	},
+	'/context': {
+		'query': {
+			'name': {'type': 'string', 'required': False},
+			'path': {'type': 'string', 'required': False},
+			'refresh': {'type': 'boolean', 'required': False, 'default': False},
+		},
+		'rules': ['No args: index of the project\'s agent docs (files + README DATs). name= or path= returns one doc as text.',
+			'Searches the project folder up to its repo root: known harness locations, then folders named skills/rules/prompts/agents.'],
+		'response': {'type': 'object', 'shape': {'projectFolder': 'string', 'roots': 'array', 'docs': 'array', 'dats': 'array'}},
+	},
+	'/tidy': {
+		'query': {
+			'force': {'type': 'boolean', 'required': False, 'default': False},
+			'parent': {'type': 'string', 'required': False},
+			'paths': {'type': 'csv<string>', 'required': False},
+			'dryRun': {'type': 'boolean', 'required': False, 'default': False},
+			'gapX': {'type': 'number', 'required': False, 'default': 60},
+			'gapY': {'type': 'number', 'required': False, 'default': 30},
+			'satelliteColumns': {'type': 'integer', 'required': False, 'default': 3},
+			'straighten': {'type': 'boolean', 'required': False, 'default': True},
+			'gridLoose': {'type': 'boolean', 'required': False, 'default': True},
+			'annotations': {'type': 'boolean', 'required': False, 'default': True},
+			'home': {'type': 'boolean', 'required': False, 'default': False},
+		},
+		'rules': ['Without paths, lays out every op in parent (default: the open network) except the bridge COMP.',
+			'With paths, lays out only those ops (and their satellites), anchored where they were; check overlaps[].',
+			'Satellites = docked ops plus unwired DATs tied to exactly one op by an OP parameter or op() expression.'],
+		'response': {'type': 'object', 'shape': {'parent': 'string', 'scope': 'string', 'ops': 'integer',
+			'groups': 'integer', 'loose': 'integer', 'crossings': 'object', 'satellites': 'object',
+			'moved': 'integer', 'nodes': 'array', 'overlaps': 'array'}},
+		'examples': [
+			{'method': 'POST', 'query': 'parent=/project1/scene', 'description': 'Tidy a whole network.'},
+			{'method': 'GET', 'query': 'parent=/project1/scene&dryRun=true', 'description': 'Preview the plan.'},
+		],
 	},
 	'/build': {
 		'query': {},
@@ -3153,9 +3560,6 @@ def _apply_custom_action(comp, a):
 # /build: create + parameterize + wire + lay out many ops in one call
 # ---------------------------------------------------------------------------
 
-_LAYOUT_DX = 175	# TD layout convention (haxlib's td-node-layout skill): 130 wide + 45 gap
-_LAYOUT_DY = 125	# between parallel chains
-
 _PAR_HELP = None
 
 
@@ -3214,26 +3618,7 @@ def _topo_layers(names, edges):
 	return order + cycle, col, cycle, pred
 
 
-def _auto_layout(names, edges, origin):
-	"""{name: (x, y)}: columns by longest path left-to-right, rows ordered by the barycenter of
-	their inputs' rows (fewer crossings), declaration order as tiebreak."""
-	_, col, _, pred = _topo_layers(names, edges)
-	index = {n: i for i, n in enumerate(names)}
-	columns = {}
-	for n in names:
-		columns.setdefault(col[n], []).append(n)
-	row, pos = {}, {}
-	for c in sorted(columns):
-		def bary(n):
-			rows = [row[p] for p in pred[n] if p in row]
-			return sum(rows) / len(rows) if rows else index[n]
-		for r, n in enumerate(sorted(columns[c], key=lambda n: (bary(n), index[n]))):
-			row[n] = r
-			pos[n] = (origin[0] + c * _LAYOUT_DX, origin[1] - r * _LAYOUT_DY)
-	return pos
-
-
-def _route_build(request, response, pars, **_):
+def _route_build(request, response, pars, webServerDAT=None, **_):
 	"""Create, parameterize, wire and lay out many ops in one call. POST a JSON body:
 	{"parent": "/project1/x", "ops": [{"name", "type", "params": {...}, "x", "y", "viewer",
 	"comment", "flags": {...}}], "connections": [{"from", "to", "input": 0}], "autoLayout": true,
@@ -3324,9 +3709,11 @@ def _route_build(request, response, pars, **_):
 			and not getattr(n, 'dock', None)]
 		origin = spec.get('origin') or ([max(n.nodeX + n.nodeWidth for n in others) + 200, max(n.nodeY for n in others)]
 			if others else [0, 0])
-		pos = _auto_layout(list(built), edges, origin)
-		for n in needs_layout:
-			_move_node(built[n], *pos[n])
+		new_ops = [built[n] for n in needs_layout]
+		skip = {webServerDAT.parent()} if webServerDAT is not None else set()
+		layout = _tidy_run(parent, new_ops, skip, _tidy_opts({'annotations': 'false'}), strict=True,
+			anchor=(origin[0], origin[1] + max(o.nodeHeight for o in new_ops)), touch=False)
+		result['layout'] = {k: layout[k] for k in ('groups', 'loose', 'crossings', 'satellites')}
 	for o in ops_spec:
 		if o['name'] in built and 'x' in o:
 			_move_node(built[o['name']], o['x'], o.get('y', 0))
@@ -3366,6 +3753,7 @@ def _route_create(request, response, pars, **_):
 			new_node.nodeY = float(y)
 	if inputs:
 		new_node.setInputs(inputs)
+	_touch(new_node)
 	_ok_json(response, _node_summary(new_node))
 
 
@@ -3413,6 +3801,7 @@ def _route_duplicate(request, response, pars, **_):
 			copies[0].nodeX = float(x)
 		if y is not None:
 			copies[0].nodeY = float(y)
+	_touch(*copies)
 	_ok_json(response, [_node_summary(n) for n in copies])
 
 
@@ -3512,16 +3901,25 @@ def _route_move(request, response, pars, **_):
 			raise ValueError("absolute 'x'/'y' positioning only supports a single 'path' - use 'paths' with 'dx'/'dy' to shift a group")
 		n = targets[0]
 		_move_node(n, float(x) if x is not None else n.nodeX, float(y) if y is not None else n.nodeY)
-	_ok_json(response, [_node_summary(n) for n in targets])
+	summaries = []
+	for n in targets:
+		s = _node_summary(n)
+		own = {n} | set(getattr(n, 'docked', None) or [])
+		hits = [o.path for o in _nodes_in_comp(n.parent()) if o not in own and o.OPType != 'annotateCOMP'
+			and getattr(o, 'dock', None) is None and _rects_overlap(n.nodeX, n.nodeY, n.nodeWidth, n.nodeHeight, o)]
+		if hits:
+			s['overlapsWith'] = hits	# an explicit move isn't corrected, but the caller should fix it
+		summaries.append(s)
+	_ok_json(response, summaries)
 
 
-def _route_layout(request, response, pars, **_):
+def _route_layout(request, response, pars, webServerDAT=None, **_):
 	"""Lay out operators via COMP.layout() -- the Python equivalent of TouchDesigner's Shift+L
-	'Layout Nodes' command. Arranges the given ops in a line or grid, snapping them into a clean,
-	non-overlapping arrangement relative to their wiring, instead of guessing x/y by hand. Returns
-	the updated node summaries so the caller can verify the result inline, without a follow-up
-	/network call."""
+	'Layout Nodes' command: a plain line or grid in wire order. Prefer /tidy, which follows the
+	data flow and keeps helper DATs under their ops. Returns the updated node summaries."""
 	_require_write_method(request, '/layout')
+	if webServerDAT is not None:
+		_require_layout_allowed(webServerDAT.parent(), pars, '/layout')
 	paths_param = _first_param(pars, 'paths')
 	parent_param = _first_param(pars, 'parent')
 	horizontal = _bool_param(pars, 'horizontal') if _first_param(pars, 'horizontal') is not None else None
@@ -3567,6 +3965,662 @@ def _route_layout(request, response, pars, **_):
 		'count': len(result_nodes),
 		'nodes': [_node_summary(n) for n in sorted(result_nodes, key=lambda n: n.path)],
 	})
+
+
+# ---------------------------------------------------------------------------
+# /tidy: graph-aware layout of an existing network
+# ---------------------------------------------------------------------------
+# A layered (Sugiyama-style) layout, left to right by data flow:
+# - columns: longest path from the sources, compacted so each op sits just before its nearest
+#   consumer (_tidy_columns); wires that skip columns get lane points
+# - order within columns: barycenter passes plus sifting, scored by a Fenwick crossing count
+# - heights: each column is fit exactly (isotonic regression) to its wires' other ends, a few
+#   passes back and forth, so chains come out straight wherever spacing allows
+# - groups: ops joined by wires or by a shared network box; stacked in their current order, with
+#   the box refit around them; unwired ops go in family rows underneath
+# Unlike TD's Shift+L, each op is laid out together with its satellites: docked ops (a GLSL
+# TOP's shader DATs, a Ramp's keys) and unwired DATs that belong to exactly one op through an OP
+# parameter or op() expression (a Script CHOP's callbacks DAT, a CHOP Execute watching one CHOP).
+# Satellites sit in rows under their host, and the spacing makes room for them.
+
+_TIDY_GAP_X = 60
+_TIDY_GAP_Y = 30
+_TIDY_SAT_GAP = 30	# TD's own docking gap: docked DATs sit 120 below a 90-high host, 160 apart
+_TIDY_REF_KINDS = ('opParam', 'expression')
+
+
+class _TidyLane:
+	"""Invisible point where a wire passes through a column it skips."""
+
+
+def _tidy_satellites(parent, skip):
+	"""{satellite: host} for ops in parent that belong under another op: docked ops, and unwired
+	DATs tied to exactly one sibling by an OP parameter or op() expression (in either direction)."""
+	children = [n for n in _nodes_in_comp(parent) if n.OPType != 'annotateCOMP' and n not in skip]
+	inset = set(children)
+	sat_of = {}
+	for n in children:
+		host = getattr(n, 'dock', None)
+		if host is not None and host in inset:
+			sat_of[n] = host
+	candidates = {n for n in children if n.isDAT and n not in sat_of and not any(n.inputs) and not n.outputs}
+	partners = {n: set() for n in candidates}
+	owns = set()
+	for n in children:
+		for r in _get_op_references(n):
+			if r['kind'] not in _TIDY_REF_KINDS:
+				continue
+			t = op(r['to'])
+			if t is None or t not in inset or t == n:
+				continue
+			owns.add((n, t))
+			if n in candidates:
+				partners[n].add(t)
+			if t in candidates:
+				partners[t].add(n)
+	for c in candidates:
+		if len(partners[c]) != 1:
+			continue
+		h = next(iter(partners[c]))
+		if h in candidates and partners[h] == {c}:
+			# two unwired DATs tied only to each other: the one holding the reference is the host
+			if (c, h) in owns and ((h, c) not in owns or c.name < h.name):
+				continue
+		sat_of[c] = h
+	flat = {}
+	for s, h in sat_of.items():
+		hops = 0
+		while h in sat_of and hops < 20:
+			h, hops = sat_of[h], hops + 1
+		if h not in sat_of and h != s:
+			flat[s] = h
+	return flat
+
+
+def _tidy_footprint(host, sats, sat_cols, gap):
+	"""The box a host takes up with its satellites in rows of sat_cols below it. Extents are
+	measured from the host's centre (the wire anchor): 'above' up, 'below' down."""
+	offsets, depth, width = [], 0, host.nodeWidth
+	for i in range(0, len(sats), sat_cols):
+		row = sats[i:i + sat_cols]
+		x = 0
+		for s in row:
+			offsets.append((s, x, -(depth + gap + s.nodeHeight)))
+			x += s.nodeWidth + gap
+		width = max(width, x - gap)
+		depth += gap + max(s.nodeHeight for s in row)
+	return {'w': width, 'above': host.nodeHeight / 2, 'below': host.nodeHeight / 2 + depth, 'offsets': offsets}
+
+
+def _tidy_crossings(columns, lsucc):
+	"""Wire crossings between each pair of neighbouring columns. Wires are taken in order of their
+	left end; one crosses every earlier wire whose right end is lower, counted with a Fenwick tree."""
+	total = 0
+	for ci in range(len(columns) - 1):
+		slot = {o: i for i, o in enumerate(columns[ci + 1])}
+		size = len(columns[ci + 1])
+		tree = [0] * (size + 1)
+		seen = 0
+		for a in columns[ci]:
+			for p in sorted(slot[b] for b in lsucc[a]):
+				i, at_or_above = p + 1, 0
+				while i > 0:
+					at_or_above += tree[i]
+					i -= i & -i
+				total += seen - at_or_above
+				i = p + 1
+				while i <= size:
+					tree[i] += 1
+					i += i & -i
+				seen += 1
+	return total
+
+
+def _tidy_barycenter_pass(columns, nbrs, order):
+	"""Sort each column in `order` by the mean slot of its neighbours in the column just visited.
+	Ops with no neighbours there keep their current slot; ties keep the current order."""
+	for ci, ref_ci in order:
+		slot = {o: i for i, o in enumerate(columns[ref_ci])}
+		here = {o: i for i, o in enumerate(columns[ci])}
+
+		def key(o):
+			ys = [slot[n] for n in nbrs[o] if n in slot]
+			return (sum(ys) / len(ys) if ys else here[o], here[o])
+		columns[ci].sort(key=key)
+
+
+def _tidy_sift(columns, lsucc, lpred, max_size=150):
+	"""Sifting: each op in turn tries every slot in its column and keeps the one with the fewest
+	crossings against both neighbouring columns. Uses a pairwise cost table, so a move costs one
+	pass down the column."""
+	for ci, col in enumerate(columns):
+		if len(col) < 2 or len(col) > max_size:
+			continue
+		left = {o: i for i, o in enumerate(columns[ci - 1])} if ci > 0 else {}
+		right = {o: i for i, o in enumerate(columns[ci + 1])} if ci + 1 < len(columns) else {}
+		ends = {o: ([left[n] for n in lpred[o] if n in left], [right[n] for n in lsucc[o] if n in right]) for o in col}
+		cost = {}	# (u, v): crossings between u's and v's wires when u sits above v
+		for u in col:
+			for v in col:
+				if u is not v:
+					cost[(u, v)] = (sum(1 for a in ends[u][0] for b in ends[v][0] if a > b)
+						+ sum(1 for a in ends[u][1] for b in ends[v][1] if a > b))
+		for o in list(col):
+			rest = [v for v in col if v is not o]
+			total = sum(cost[(o, v)] for v in rest)	# o in the top slot
+			best_k, best_total = 0, total
+			for k, v in enumerate(rest, 1):
+				total += cost[(v, o)] - cost[(o, v)]
+				if total < best_total:
+					best_k, best_total = k, total
+			rest.insert(best_k, o)
+			col[:] = rest
+
+
+def _tidy_order(columns, lsucc, lpred, sweeps):
+	"""Reorder the columns in place to reduce wire crossings: barycenter passes alternating left to
+	right and right to left, each followed by sifting; the best order seen wins. Returns
+	(crossings before, after)."""
+	start = best_x = _tidy_crossings(columns, lsucc)
+	best = [list(c) for c in columns]
+	n = len(columns)
+	for it in range(sweeps):
+		if best_x == 0:
+			break
+		if it % 2 == 0:
+			_tidy_barycenter_pass(columns, lpred, [(c, c - 1) for c in range(1, n)])
+		else:
+			_tidy_barycenter_pass(columns, lsucc, [(c, c + 1) for c in range(n - 2, -1, -1)])
+		_tidy_sift(columns, lsucc, lpred)
+		x = _tidy_crossings(columns, lsucc)
+		if x < best_x:
+			best, best_x = [list(c) for c in columns], x
+	columns[:] = best
+	return start, best_x
+
+
+_TIDY_FAMILY_ORDER = ('COMP', 'TOP', 'CHOP', 'POP', 'SOP', 'MAT', 'DAT')
+_TIDY_LANE_WEIGHT = 4	# how hard a long wire's ends pull toward its lane (see _tidy_layered)
+_TIDY_BOX_PAD = 30
+_TIDY_GROUP_GAP = 3	# rows of gap_y between stacked groups
+_TIDY_MIN_WRAP_TILES = 4
+
+
+def _tidy_acyclic(hosts, edges):
+	"""(edges without the back edges a depth-first walk finds, back edges). Wiring loops would
+	otherwise leave their ops unranked; dropping one edge per loop lets them be layered."""
+	succ = {o: [] for o in hosts}
+	for a, b in edges:
+		succ[a].append(b)
+	state, back = {}, set()
+	for start in sorted(hosts, key=lambda o: (o.nodeX, -o.nodeY)):
+		if start in state:
+			continue
+		state[start] = 1
+		stack = [(start, iter(succ[start]))]
+		while stack:
+			n, it = stack[-1]
+			nxt = next(it, None)
+			if nxt is None:
+				state[n] = 2
+				stack.pop()
+			elif state.get(nxt) == 1:
+				back.add((n, nxt))
+			elif nxt not in state:
+				state[nxt] = 1
+				stack.append((nxt, iter(succ[nxt])))
+	return [e for e in edges if e not in back], back
+
+
+def _tidy_columns(group, succ, pred):
+	"""Column per op, from 0: longest path from the sources, then (right to left) each op moves up to
+	just before its nearest consumer. A source ends up next to what it feeds and a dead end next to
+	its input, so no wire is longer than it has to be. Edges must be acyclic."""
+	indeg = {o: len(pred[o]) for o in group}
+	queue = [o for o in group if not indeg[o]]
+	order = []
+	while queue:
+		o = queue.pop()
+		order.append(o)
+		for s in succ[o]:
+			indeg[s] -= 1
+			if not indeg[s]:
+				queue.append(s)
+	col = {o: 0 for o in group}
+	for o in order:
+		for s in succ[o]:
+			col[s] = max(col[s], col[o] + 1)
+	for o in reversed(order):
+		if succ[o]:
+			col[o] = min(col[s] for s in succ[o]) - 1
+	base = min(col.values())
+	return {o: c - base for o, c in col.items()}
+
+
+def _tidy_fit_column(column, want, weight, ext, gap):
+	"""Anchor y for each item of a column (top to bottom) as close to `want` as possible in weighted
+	least squares, keeping the order and `gap` between footprints. Exact: substituting
+	z = y + (spacing above) turns the constraints into "z never increases", which is isotonic
+	regression, solved by pooling adjacent violators."""
+	shift = [0.0]
+	for i in range(1, len(column)):
+		shift.append(shift[-1] + ext[column[i - 1]][1] + ext[column[i]][0] + gap)
+	blocks = []	# [mean, weight, count]
+	for i, o in enumerate(column):
+		blocks.append([want[o] + shift[i], weight[o], 1])
+		while len(blocks) > 1 and blocks[-2][0] < blocks[-1][0]:
+			m2, w2, c2 = blocks.pop()
+			m1, w1, c1 = blocks.pop()
+			blocks.append([(m1 * w1 + m2 * w2) / (w1 + w2), w1 + w2, c1 + c2])
+	z = [m for m, _, c in blocks for _ in range(c)]
+	return {o: z[i] - shift[i] for i, o in enumerate(column)}
+
+
+def _tidy_layered(group, succ, pred, geo, gap_x, gap_y, straighten, stats):
+	"""{host: (left x, anchor y)} for the wired ops of one group, in group-local coordinates. The
+	anchor is the host's centre; its satellites hang below (geo extents)."""
+	col = _tidy_columns(group, succ, pred)
+	ncols = max(col.values()) + 1
+	lsucc = {o: [] for o in group}
+	lpred = {o: [] for o in group}
+	ext = {o: (geo[o]['above'], geo[o]['below']) for o in group}
+	seed = {o: o.nodeY + o.nodeHeight / 2 for o in group}	# current height: the first column order
+	lanes = []
+	for a in group:
+		for b in succ[a]:
+			prev, span = a, col[b] - col[a]
+			for step in range(1, span):	# a wire skipping columns gets a lane point in each
+				d = _TidyLane()
+				lsucc[d], lpred[d], ext[d] = [], [], (7, 7)
+				seed[d] = seed[a] + (seed[b] - seed[a]) * step / span
+				lanes.append((d, col[a] + step))
+				lsucc[prev].append(d)
+				lpred[d].append(prev)
+				prev = d
+			lsucc[prev].append(b)
+			lpred[b].append(prev)
+	columns = [[] for _ in range(ncols)]
+	for o in group:
+		columns[col[o]].append(o)
+	for d, c in lanes:
+		columns[c].append(d)
+	for c in columns:
+		c.sort(key=lambda o: -seed[o])
+
+	before, after = _tidy_order(columns, lsucc, lpred, sweeps=24 if len(lsucc) < 600 else 6)
+	stats['crossingsBefore'] += before
+	stats['crossingsAfter'] += after
+
+	xs, x = [], 0
+	for c in columns:
+		xs.append(x)
+		x += max((geo[o]['w'] for o in c if o in geo), default=0) + gap_x
+
+	cy = {}
+	for c in columns:
+		y = 0
+		for o in c:
+			cy[o] = y - ext[o][0]
+			y = cy[o] - ext[o][1] - gap_y
+	if straighten:
+		# Each pass moves every column to the least-squares fit of its wires' other ends. TD draws a
+		# long wire straight between its ends, not through its lane points, so lane links weigh more:
+		# the ends line up with the lane and the wire runs through the space it kept free.
+		def link(o, n):
+			return _TIDY_LANE_WEIGHT if isinstance(o, _TidyLane) or isinstance(n, _TidyLane) else 1
+		for it in range(12):
+			for c in (range(ncols) if it % 2 == 0 else range(ncols - 1, -1, -1)):
+				want, weight = {}, {}
+				for o in columns[c]:
+					nb = [(cy[n], link(o, n)) for n in lpred[o] + lsucc[o]]
+					total = sum(w for _, w in nb)
+					want[o] = sum(y * w for y, w in nb) / total if total else cy[o]
+					weight[o] = max(total, 1)
+				cy.update(_tidy_fit_column(columns[c], want, weight, ext, gap_y))
+	return {o: (xs[col[o]], cy[o]) for o in group}
+
+
+def _tidy_flow(ops, geo, wrap, gap_x, gap_y, by_family):
+	"""{op: (left x, anchor y)} packing ops into rows from (0, 0) downward, wrapping at `wrap`.
+	by_family: one run of rows per family (COMPs, TOPs, CHOPs, ...), each sorted by name;
+	otherwise reading order of their current positions."""
+	if by_family:
+		rank = {f: i for i, f in enumerate(_TIDY_FAMILY_ORDER)}
+		fams = {}
+		for o in ops:
+			fams.setdefault(o.family, []).append(o)
+		runs = [sorted(fams[f], key=lambda o: o.name) for f in sorted(fams, key=lambda f: (rank.get(f, 99), f))]
+	else:
+		runs = [sorted(ops, key=lambda o: (-o.nodeY, o.nodeX))]
+	pos, top = {}, 0.0
+	for run in runs:
+		row, x = [], 0.0
+		for o in run + [None]:
+			w = geo[o]['w'] if o is not None else 0
+			if row and (o is None or x + w > wrap):
+				for r, rx in row:
+					pos[r] = (rx, top - geo[r]['above'])
+				top -= max(geo[r]['above'] + geo[r]['below'] for r, _ in row) + gap_y
+				row, x = [], 0.0
+			if o is not None:
+				row.append((o, x))
+				x += w + gap_x
+	return pos
+
+
+def _tidy_extent(local, geo):
+	"""(min x, max x, top, bottom) of group-local {host: (x, anchor y)} positions."""
+	return (min(x for x, _ in local.values()),
+		max(x + geo[o]['w'] for o, (x, _) in local.items()),
+		max(y + geo[o]['above'] for o, (_, y) in local.items()),
+		min(y - geo[o]['below'] for o, (_, y) in local.items()))
+
+
+def _tidy_plan(hosts, edges, geo, opts, boxes=(), anchor=None):
+	"""(targets {host: (nodeX, nodeY)}, group_of {host: group}, stats).
+	Groups are ops joined by wires or by sharing a network box. Each group's wired ops get a layered
+	layout; its unwired box members go in rows under them. Groups stack top to bottom in their
+	current order, with room for their boxes; ops on their own go in family rows underneath, wrapped
+	to the layout's width. The layout's top-left is `anchor` (x, top y), or the hosts' current one."""
+	gap_x, gap_y = opts['gap_x'], opts['gap_y']
+	stats = {'crossingsBefore': 0, 'crossingsAfter': 0}
+	layered, back = _tidy_acyclic(hosts, edges)
+	stats['loops'] = len(back)
+	succ = {o: [] for o in hosts}
+	pred = {o: [] for o in hosts}
+	for a, b in layered:
+		succ[a].append(b)
+		pred[b].append(a)
+
+	root = {o: o for o in hosts}
+
+	def find(o):
+		while root[o] != o:
+			root[o] = root[root[o]]
+			o = root[o]
+		return o
+
+	def join(a, b):
+		ra, rb = find(a), find(b)
+		if ra != rb:
+			root[ra] = rb
+	for a, b in edges:
+		join(a, b)
+	boxed = set()
+	for _, members in boxes:
+		members = [m for m in members if m in root]
+		boxed.update(members)
+		for m in members[1:]:
+			join(members[0], m)
+	members_of = {}
+	for o in hosts:
+		members_of.setdefault(find(o), []).append(o)
+	groups = [g for g in members_of.values() if len(g) > 1 or g[0] in boxed]
+	loose = [g[0] for g in members_of.values() if len(g) == 1 and g[0] not in boxed]
+	groups.sort(key=lambda g: (-max(o.nodeY + o.nodeHeight for o in g), min(o.nodeX for o in g)))
+
+	if anchor is not None:
+		left, cursor = anchor
+	else:	# the current top-left, box frames included, so tidying a tidy layout changes nothing
+		frames = [a for a, _ in boxes if a is not None]
+		left = min([o.nodeX for o in hosts] + [a.nodeX for a in frames])
+		cursor = max([o.nodeY + o.nodeHeight for o in hosts] + [a.nodeY + a.nodeHeight for a in frames])
+	min_wrap = _TIDY_MIN_WRAP_TILES * (130 + gap_x)
+	targets, group_of, widest = {}, {}, 0
+	for gi, g in enumerate(groups):
+		wired = [o for o in g if succ[o] or pred[o]]
+		local = _tidy_layered(wired, succ, pred, geo, gap_x, gap_y, opts['straighten'], stats) if wired else {}
+		rest = [o for o in g if o not in local]
+		if rest:
+			if local:
+				x0, x1, _, bottom = _tidy_extent(local, geo)
+				wrap, dy = max(x1 - x0, min_wrap), bottom - gap_y
+			else:
+				x0, wrap, dy = 0, min_wrap, 0
+			for o, (x, y) in _tidy_flow(rest, geo, wrap, gap_x, gap_y, by_family=False).items():
+				local[o] = (x0 + x, dy + y)
+		x0, x1, top, bottom = _tidy_extent(local, geo)
+		g_boxes = [(a, m) for a, m in boxes if any(o in local for o in m)]
+		title = max((_tidy_box_title(a) for a, _ in g_boxes), default=0)
+		pad = _TIDY_BOX_PAD if g_boxes else 0
+		gx, gtop = left + pad, cursor - (pad + title)
+		for o, (x, y) in local.items():
+			group_of[o] = gi
+			targets[o] = (round(gx + x - x0), round(gtop - (top - y) - o.nodeHeight / 2))
+		widest = max(widest, x1 - x0 + 2 * pad)
+		cursor = gtop - (top - bottom) - pad - gap_y * _TIDY_GROUP_GAP
+	if loose and opts['grid_loose']:
+		for o, (x, y) in _tidy_flow(loose, geo, max(widest, min_wrap), gap_x, gap_y, by_family=True).items():
+			targets[o] = (round(left + x), round(cursor + y - o.nodeHeight / 2))
+	for o in loose:
+		group_of[o] = 'loose'
+		targets.setdefault(o, (o.nodeX, o.nodeY))
+	stats['groups'] = len(groups)
+	stats['loose'] = len(loose)
+	return targets, group_of, stats
+
+
+def _tidy_box_title(a):
+	par = getattr(getattr(a, 'par', None), 'Titleheight', None)
+	return par.eval() if par is not None else 30
+
+
+def _tidy_center_inside(o, a):
+	cx, cy = o.nodeX + o.nodeWidth / 2, o.nodeY + o.nodeHeight / 2
+	return a.nodeX <= cx <= a.nodeX + a.nodeWidth and a.nodeY <= cy <= a.nodeY + a.nodeHeight
+
+
+def _tidy_box_members(a, pool, sat_of):
+	"""Hosts in `pool` that network box `a` holds: TD's enclosedOPs when it has any, otherwise
+	ops whose centre is inside the box. A satellite counts as its host."""
+	inside = [o for o in (getattr(a, 'enclosedOPs', None) or []) if o.valid]
+	if not inside:
+		inside = [o for o in _nodes_in_comp(a.parent()) if o.OPType != 'annotateCOMP' and _tidy_center_inside(o, a)]
+	return {sat_of.get(o, o) for o in inside} & pool
+
+
+def _tidy_box_fit(a, members, targets, geo):
+	"""(x, y, w, h) for box `a` wrapped around its members' new footprints, title bar included."""
+	x0 = min(targets[o][0] for o in members)
+	x1 = max(targets[o][0] + geo[o]['w'] for o in members)
+	y0 = min(targets[o][1] + o.nodeHeight / 2 - geo[o]['below'] for o in members)
+	y1 = max(targets[o][1] + o.nodeHeight for o in members)
+	p = _TIDY_BOX_PAD
+	return (round(x0 - p), round(y0 - p), round(x1 - x0 + 2 * p), round(y1 - y0 + 2 * p + _tidy_box_title(a)))
+
+
+def _tidy_note_follow(a, candidates, targets):
+	"""(x, y, w, h) for a box that holds no ops (a text note): it keeps its offset from the nearest
+	op, so it stays beside what it describes. None if that op isn't being moved."""
+	if not candidates:
+		return None
+	cx, cy = a.nodeX + a.nodeWidth / 2, a.nodeY + a.nodeHeight / 2
+	near = min(candidates, key=lambda o: (o.nodeX + o.nodeWidth / 2 - cx) ** 2 + (o.nodeY + o.nodeHeight / 2 - cy) ** 2)
+	if near not in targets:
+		return None
+	dx, dy = targets[near][0] - near.nodeX, targets[near][1] - near.nodeY
+	return (round(a.nodeX + dx), round(a.nodeY + dy), a.nodeWidth, a.nodeHeight)
+
+
+_LAYOUT_MODES = ('agent', 'auto', 'keep')
+# Structural writes that Layout Mode 'auto' follows with a tidy of the touched network.
+_AUTO_TIDY_ROUTES = {'/create', '/build', '/insert', '/duplicate', '/wire'}
+
+
+def _layout_mode(comp):
+	mode = _comp_par(comp, 'Layoutmode', 'agent')
+	return mode if mode in _LAYOUT_MODES else 'agent'
+
+
+def _require_layout_allowed(comp, pars, route):
+	"""Layout Mode 'keep' means the developer arranges this project by hand: re-layout routes
+	refuse unless the caller passes force=true (because the developer asked for it)."""
+	if _layout_mode(comp) == 'keep' and not _bool_param(pars, 'force'):
+		raise BridgeError(f"{route} is off: this project's Layout Mode is 'Keep My Layout'. Leave the layout "
+			"alone, or pass force=true only if the developer asked for it.", code='layout_kept', status=409,
+			layoutMode='keep')
+
+
+def _tidy_opts(pars):
+	return {
+		'gap_x': float(_first_param(pars, 'gapX') or _TIDY_GAP_X),
+		'gap_y': float(_first_param(pars, 'gapY') or _TIDY_GAP_Y),
+		'sat_cols': max(1, int(_first_param(pars, 'satelliteColumns') or 3)),
+		'straighten': _bool_param(pars, 'straighten', True),
+		'grid_loose': _bool_param(pars, 'gridLoose', True),
+		'annotations': _bool_param(pars, 'annotations', True),
+	}
+
+
+def _tidy_run(parent, listed, skip, opts, dry=False, strict=False, anchor=None, touch=True):
+	"""Plan (and unless dry, apply) a tidy of `parent`, or of just the `listed` ops. Returns the
+	result dict /tidy serves. strict: a listed satellite whose host isn't listed is laid out on its
+	own instead of pulling its host in (used by /build, which must not move existing ops)."""
+	sat_of = _tidy_satellites(parent, skip)
+	if listed and strict:
+		listed_set = set(listed)
+		sat_of = {s: h for s, h in sat_of.items() if s not in listed_set or h in listed_set}
+	everyone = [n for n in _nodes_in_comp(parent) if n.OPType != 'annotateCOMP' and n not in skip and n not in sat_of]
+	if listed:
+		wanted = {sat_of.get(o, o) for o in listed}
+		hosts = [n for n in everyone if n in wanted]
+	else:
+		hosts = everyone
+	if not hosts:
+		raise BridgeError(f'nothing to tidy in {parent.path}', code='nothing_to_tidy')
+	host_set = set(hosts)
+	sats = {h: [] for h in hosts}
+	for s, h in sat_of.items():
+		if h in host_set:
+			sats[h].append(s)
+	for h in hosts:
+		sats[h].sort(key=lambda s: (s.dock is None, s.nodeX, -s.nodeY))
+	geo = {h: _tidy_footprint(h, sats[h], opts['sat_cols'], _TIDY_SAT_GAP) for h in hosts}
+
+	canon = {h: h for h in hosts}
+	edges = set()
+	for o in hosts + [s for h in hosts for s in sats[h]]:
+		dst = canon.get(sat_of.get(o, o))
+		conns = list(o.inputConnectors) + list(getattr(o, 'inputCOMPConnectors', None) or [])
+		for conn in conns:
+			for link in conn.connections:
+				src = canon.get(sat_of.get(link.owner, link.owner))
+				if src is not None and dst is not None and src != dst:
+					edges.add((src, dst))
+
+	# Network boxes: a box holding ops keeps them in one group and is refit around them (in a
+	# scoped tidy, only boxes whose ops are all being tidied). A box holding no ops is a note: it
+	# follows the op nearest to it.
+	boxes, notes = [], []
+	if opts['annotations']:
+		pool = set(everyone)
+		for a in (n for n in _nodes_in_comp(parent) if n.OPType == 'annotateCOMP'):
+			members = _tidy_box_members(a, pool, sat_of)
+			if not members:
+				notes.append(a)
+			elif members <= host_set:
+				boxes.append((a, members))
+
+	targets, group_of, stats = _tidy_plan(hosts, edges, geo, opts, boxes, anchor=anchor)
+
+	sat_targets = {}
+	for h in hosts:
+		hx, hy = targets[h]
+		for s, dx, dy in geo[h]['offsets']:
+			sat_targets[s] = (round(hx + dx), round(hy + dy))
+
+	ann_targets = {a: _tidy_box_fit(a, m, targets, geo) for a, m in boxes}
+	placed = {**targets, **sat_targets}
+	for a in notes:
+		box = _tidy_note_follow(a, everyone + list(sat_of), placed)
+		if box is not None:
+			ann_targets[a] = box
+
+	plan = list(targets.items()) + list(sat_targets.items())
+	moved = [(o, x, y) for o, (x, y) in plan if (round(o.nodeX), round(o.nodeY)) != (x, y)]
+	moved += [(a, *box) for a, box in ann_targets.items()
+		if (a.nodeX, a.nodeY, a.nodeWidth, a.nodeHeight) != box]
+	if not dry:
+		for o, (x, y) in plan:
+			_move_node(o, x, y)	# hosts first; their docked ops are then placed by the satellite pass
+		for a, (x, y, w, h) in ann_targets.items():
+			a.nodeX, a.nodeY, a.nodeWidth, a.nodeHeight = x, y, w, h
+		if touch:
+			_touch(*[m[0] for m in moved])
+	moved_paths = {m[0].path for m in moved}
+	result = {
+		'parent': parent.path,
+		'scope': 'paths' if listed else 'all',
+		'dryRun': dry,
+		'ops': len(hosts),
+		'groups': stats['groups'],
+		'loose': stats['loose'],
+		'loops': stats['loops'],
+		'crossings': {'before': stats['crossingsBefore'], 'after': stats['crossingsAfter']},
+		'satellites': {h.path: [s.name for s in sats[h]] for h in hosts if sats[h]},
+		'moved': len(moved),
+		'nodes': [{'path': m[0].path, 'x': m[1], 'y': m[2], **({'w': m[3], 'h': m[4]} if len(m) == 5 else {})}
+			for m in sorted(moved, key=lambda m: m[0].path)],
+	}
+	if not dry:
+		result['overlaps'] = [p for p in _overlapping_pairs(parent) if p[0] in moved_paths or p[1] in moved_paths]
+	return result
+
+
+def _route_tidy(request, response, pars, webServerDAT, **_):
+	"""Tidy a network's layout by data flow: wired chains become left-to-right columns with fewer
+	crossings and straight wires, separate chains stack top to bottom, unwired ops go into a grid
+	underneath, and each op's docked ops and own unwired DATs (shader, callbacks, keys, execute DATs)
+	sit in rows below it. Network boxes are refit. Use it after creating, wiring or moving ops,
+	unless the developer wants their layout kept (Layout Mode 'keep' refuses without force=true).
+	Scope with `paths` to tidy part of a network; `dryRun=true` returns the plan without moving
+	anything. One undo step."""
+	dry = _bool_param(pars, 'dryRun')
+	if not dry:
+		_require_write_method(request, '/tidy')
+		_require_layout_allowed(webServerDAT.parent(), pars, '/tidy')
+	listed = [_resolve_op(p.strip()) for p in (_first_param(pars, 'paths') or '').split(',') if p.strip()]
+	parent_param = _first_param(pars, 'parent')
+	parent = _resolve_op(parent_param) if parent_param else (listed[0].parent() if listed else _get_current_network())
+	if not parent.isCOMP:
+		raise BridgeError(f"'{parent.path}' is not a COMP", code='wrong_family')
+	stray = [o.path for o in listed if o.parent() != parent]
+	if stray:
+		raise BridgeError(f'paths must all be children of {parent.path}', code='mixed_parents', paths=stray)
+	result = _tidy_run(parent, listed, {webServerDAT.parent()}, _tidy_opts(pars), dry=dry)	# the bridge never moves
+	if not dry and _bool_param(pars, 'home'):
+		pane = _get_network_editor_pane()
+		if pane is not None and pane.owner == parent:
+			pane.home()
+	result['layoutMode'] = _layout_mode(webServerDAT.parent())
+	_ok_json(response, result)
+
+
+def _auto_tidy(webServerDAT, response, pars):
+	"""Layout Mode 'auto': after a structural write, tidy each network it touched, inside the same
+	undo step, and report it in the response as autoTidy[]."""
+	bridge = webServerDAT.parent()
+	parents = {}
+	for o in _touched_ops(pars):
+		p = o.parent()
+		if p is not None and p != bridge and not p.path.startswith(bridge.path + '/'):
+			parents[p.path] = p
+	done = []
+	for p in parents.values():
+		try:
+			r = _tidy_run(p, [], {bridge}, _tidy_opts({}), touch=False)
+			done.append({'parent': p.path, 'moved': r['moved'], 'overlaps': r['overlaps']})
+		except BridgeError:
+			pass	# nothing to tidy
+		except Exception as e:
+			done.append({'parent': p.path, 'error': f'{type(e).__name__}: {e}'})
+	try:
+		data = json.loads(response.get('data') or 'null')
+		if isinstance(data, dict):
+			data['autoTidy'] = done
+			response['data'] = json.dumps(data, default=str)
+	except ValueError:
+		pass
 
 
 def _route_delete(request, response, pars, webServerDAT, **_):
@@ -3836,6 +4890,8 @@ _ROUTES = {
 	'/annotate':             _route_annotate,
 	'/move':                 _route_move,
 	'/layout':               _route_layout,
+	'/tidy':                 _route_tidy,
+	'/context':              _route_context,
 	'/delete':               _route_delete,
 	'/bounds':               _route_bounds,
 	'/errors':               _route_errors,
@@ -3941,6 +4997,9 @@ PAR_HELP = {
 	'Cooldown': 'How many seconds the bridge refuses new requests after a slow one (see Slow Call Threshold).',
 	'Confirmdelete': ('Ask you before an agent deletes operators. A dialog offers Delete, Bypass instead, or '
 		'Keep, and the agent is told what you chose. Deletes inside Sandbox Path never ask.'),
+	'Layoutmode': ("How agents treat this project's network layout. Agent Tidies: agents run /tidy after "
+		'they edit a network. Auto Tidy After Edits: the bridge tidies every network an agent creates or '
+		'wires ops in, in the same undo step. Keep My Layout: /tidy and /layout refuse unless you ask.'),
 	'Sandboxpath': ('A COMP where agents can delete freely (tests, scratch builds), even with Confirm Agent '
 		'Deletes on.'),
 }
@@ -4034,6 +5093,10 @@ def setup_component(comp, dev=None):
 	p = ensure('Confirmdelete', lambda: follow.appendToggle('Confirmdelete', label='Confirm Agent Deletes'), False)
 	p = ensure('Sandboxpath', lambda: follow.appendStr('Sandboxpath', label='Sandbox Path'), '/project1/_agent_sandbox')
 	p.default = '/project1/_agent_sandbox'
+	p = ensure('Layoutmode', lambda: follow.appendMenu('Layoutmode', label='Layout Mode'))
+	p.menuNames = list(_LAYOUT_MODES)
+	p.menuLabels = ['Agent Tidies', 'Auto Tidy After Edits', 'Keep My Layout']
+	p.default = 'agent'
 
 	# The startup DATs call into this module by the route-code DAT's actual name.
 	cb = _callbacks_dat(comp)
@@ -4228,7 +5291,31 @@ def init_prompt_text(comp, port):
 	text = text.replace('127.0.0.1:3031', f'127.0.0.1:{port}')
 	header = (f"You are connected to the TouchDesigner app '{_comp_label(comp)}' "
 		f"(project {project.name}) on port {port}.\n\n")
-	return header + text
+	return header + text + '\n\n' + project_notes(comp, port)
+
+
+_LAYOUT_MODE_NOTES = {
+	'agent': ('Layout Mode: **Agent Tidies**. After you create, wire or move ops, run `/tidy` on that network '
+		'(scope it with `paths=` where the developer arranged things by hand).'),
+	'auto': ('Layout Mode: **Auto Tidy After Edits**. The bridge tidies each network you create or wire ops in '
+		'(`autoTidy` in the response), so you don\'t need to call `/tidy` after those.'),
+	'keep': ('Layout Mode: **Keep My Layout**. Don\'t re-lay-out existing ops (`/tidy` and `/layout` refuse); '
+		'give new ops explicit x/y in free space, or let `/build` place them.'),
+}
+
+
+def project_notes(comp, port):
+	"""The project-specific end of the init prompt: layout mode and the project's own agent docs."""
+	lines = ['## This project', '', _LAYOUT_MODE_NOTES[_layout_mode(comp)], '']
+	summary = context_summary(comp)
+	if summary:
+		lines += [f'Project docs found by `/context` (read the ones relevant to the task with '
+			f'`curl -s "http://127.0.0.1:{port}/context?name=<name>"`; skip any your harness already loaded; '
+			'they override generic guidance where they disagree):', '', summary]
+	else:
+		lines.append('No project-local agent docs were found (`/context` lists AGENTS.md, CLAUDE.md, skills and '
+			'rules folders, and README DATs).')
+	return '\n'.join(lines) + '\n'
 
 
 def copy_prompt(comp):
@@ -4339,7 +5426,7 @@ def _request_blocked_reason(request):
 _UNDO_ROUTES = {
 	'/par', '/dat', '/create', '/wire', '/insert', '/duplicate', '/comment',
 	'/bypass', '/flag', '/annotate', '/move', '/layout', '/delete', '/run', '/pulse', '/custompars',
-	'/build',
+	'/build', '/tidy',
 }
 
 
@@ -4467,6 +5554,8 @@ td-http-api bridge. Every td_* tool is one bridge route; arguments become its qu
 
 - Look before you change: td_network (one COMP; recursive=true for subtrees), td_errors, td_par / td_pars,
   td_custompars, td_dat, td_snapshot + td_job (images), td_sample (pixel stats), td_chop.
+- {layout_note} td_tidy keeps helper DATs under their ops; prefer it over td_layout.
+- This project's own agent docs (instructions, skills, rules, README DATs): {context_note}
 - Build with td_build (ops + params + connections + auto layout in one call; safe to retry). Set many
   parameters with td_par body {{"set": {{"<path>": {{"<par>": value}}}}}}. Edit code with td_dat mode=edit
   body {{"old", "new"}} rather than rewriting whole DATs.
@@ -4478,6 +5567,19 @@ td-http-api bridge. Every td_* tool is one bridge route; arguments become its qu
   td_help q= to search, page= / op= / class= to read (section=, par= for one parameter). Use it
   instead of memory.
 - Full guide: td_docs. Parameter names: td_pars or td_opinfo, never memory."""
+
+
+def _mcp_context_note(comp):
+	try:
+		idx = _context_index(comp)
+	except Exception:
+		return 'td_context lists them.'
+	names = [d['name'] for d in idx['docs'] + idx['dats']]
+	if not names:
+		return 'none found.'
+	shown = ', '.join(names[:12]) + (f', +{len(names) - 12} more' if len(names) > 12 else '')
+	return (f'{len(names)} found ({shown}). td_context lists them; td_context name=<name> reads one. '
+		'Read the relevant ones; they override generic guidance.')
 
 
 def _mcp_tool_name(uri):
@@ -4588,7 +5690,9 @@ def _route_mcp(request, response, pars, webServerDAT, **_):
 				'protocolVersion': asked if asked in _MCP_PROTOCOLS else _MCP_PROTOCOLS[0],
 				'capabilities': {'tools': {'listChanged': False}},
 				'serverInfo': {'name': 'td-http-api', 'title': f'TouchDesigner ({_comp_label(comp)})', 'version': VERSION},
-				'instructions': _MCP_INSTRUCTIONS.format(label=_comp_label(comp), project=project.name),
+				'instructions': _MCP_INSTRUCTIONS.format(label=_comp_label(comp), project=project.name,
+					layout_note=_LAYOUT_MODE_NOTES[_layout_mode(comp)].replace('`/', '`td_').replace('**', ''),
+					context_note=_mcp_context_note(comp)),
 			}
 		elif method == 'ping':
 			result = {}
@@ -4668,7 +5772,15 @@ def _dispatch(webServerDAT, request, response, uri, pars):
 		if mutating:
 			ui.undo.startBlock(_undo_name(request, uri, pars))
 			undo_open = True
+		ids_before = _op_ids() if mutating and uri in _NEW_OP_ROUTES else None
 		handler(request, response, pars, webServerDAT=webServerDAT)
+		ok = response.get('statusCode') == 200
+		if ids_before is not None and ok:
+			unstacked = _unstack(_new_ops_since(ids_before))
+			if unstacked:
+				_add_to_response(response, 'unstacked', unstacked)
+		if mutating and uri in _AUTO_TIDY_ROUTES and ok and _layout_mode(webServerDAT.parent()) == 'auto':
+			_auto_tidy(webServerDAT, response, pars)
 	except MethodNotAllowedError as e:
 		_error_response(response, 405, 'method_not_allowed', str(e))
 	except BridgeError as e:

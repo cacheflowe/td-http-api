@@ -42,6 +42,8 @@ This tool is a work-in-progress, and the API is still evolving. If you have ques
 - **Set parameters** — read and write any parameter value or expression
 - **Run Python** — execute one-off scripts and capture output
 - **Move & organize** — reposition nodes, add comments, group with annotations
+- **Tidy layouts** — `/tidy` lays a network out left to right by data flow, keeps helper DATs
+  (GLSL shaders, callbacks, keys) under their ops, and never stacks a new node on top of another
 - **Compare snapshots** — diff two network states to see exactly what changed
 
 ---
@@ -90,6 +92,10 @@ reverts it.
   Bypass instead or Keep choice. Nothing inside **Sandbox Path** asks.
 - **Slow Call Threshold / Cooldown**: after a very slow call, the bridge briefly refuses new ones
   so TD stays responsive.
+- **Layout Mode**: how agents treat your network layout. **Agent Tidies** (default): agents tidy a
+  network after editing it. **Auto Tidy After Edits**: the bridge tidies every network an agent
+  creates or wires ops in, in the same undo step. **Keep My Layout**: agents leave your layout
+  alone (new ops still go into free space).
 
 **No registration needed:** agents talk to the bridge over plain HTTP, so the pasted prompt is all
 the setup there is. **MCP is optional:** the bridge also speaks MCP at
@@ -128,6 +134,14 @@ The bridge carries its own agent docs and serves them to the agent (`/init`, `/d
 - `td-network-craft.md` — idiomatic network-building technique
 - `td-common-mistakes.md` — common TD Python traps to avoid
 - `td-process-testing.md` — restarting TD safely, and testing in a throwaway TD process
+
+### **Your project's own agent docs**
+Agents pick up your project's notes through `/context`, whatever harness wrote them: `AGENTS.md`,
+`CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md`, Cursor/Windsurf/Cline/Roo/Kiro rules,
+`.claude`/`.agents`/`.codex` skills, and any folder named `skills`, `rules`, `prompts` or `agent-docs`.
+It looks in the `.toe`'s folder and up to its repo root. Inside the project, a Text DAT named
+`README`, `AGENTS` or `agent_notes` (or tagged `agentdoc`) counts too, so a component carries its
+own notes into every project it's used in. The start-up prompt lists what it found.
 
 ### **TouchDesigner docs**
 Built in: agents ask the bridge (`/help`), which reads TD's own offline documentation for your

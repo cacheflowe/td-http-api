@@ -6,6 +6,36 @@ heading and uses it for the GitHub release notes.
 
 ## Unreleased
 
+- **New: `/tidy` (MCP `td_tidy`), graph-aware layout for existing networks.**
+  - Wired chains become left-to-right columns with fewer crossings and straightened wires, separate
+    chains stack, and unwired ops go into a grid. Network boxes are refit.
+  - Each op keeps its satellites in rows below it, with room reserved so they don't overlap
+    neighbours. Satellites are docked ops (a GLSL TOP's shader/info/compute DATs, a Ramp's keys)
+    and unwired DATs tied to exactly one op by an OP parameter or `op()` expression.
+  - `paths=` tidies part of a network in place. `dryRun=true` previews. One undo step.
+  - Agent docs, `/init` and the MCP instructions now say to tidy after editing a network unless the
+    developer wants their layout kept. Inspired by the Network Tidy tox.
+  - Columns are compacted so sources and dead ends sit next to what they connect to. Crossings
+    are reduced with barycenter passes and sifting, and each column's heights are fit exactly to
+    its wires, so chains come out straight. Long wires keep to their lane, and wiring loops are
+    handled.
+  - A network box keeps its ops together and is refit around them; a text note stays beside the
+    op nearest to it. Unwired ops go in rows by family. Tidying a tidy network changes nothing.
+- **New: Layout Mode par** (Agent page): Agent Tidies (default), Auto Tidy After Edits (the bridge
+  tidies after `/create`, `/build`, `/insert`, `/duplicate`, `/wire`, in the same undo step), or
+  Keep My Layout (`/tidy` and `/layout` refuse without `force=true`). Shown in `/server-info`,
+  `/init` and the MCP instructions.
+- **New: new ops never land on top of existing ones.** After `/create`, `/build`, `/insert`,
+  `/duplicate` and `/run`, a new op that overlaps a sibling is moved down to free space (listed in
+  `unstacked`). `/move` flags `overlapsWith` instead of correcting an explicit position.
+- **New: `/context` (MCP `td_context`), the project's own agent docs.** Indexes instruction files,
+  skills, rules and prompts in every common harness layout (Claude, Codex/AGENTS.md, Copilot,
+  Cursor, Windsurf, Cline, Roo, Kiro, Gemini, Continue, Junie, `.ai/`), plus a fuzzy pass over
+  folders named skills/rules/prompts/agents, in the project folder up to its repo root, and
+  README/AGENTS DATs inside the `.toe`. `/init` and the MCP instructions list what's there.
+- `/build`'s auto layout now uses the `/tidy` algorithm, so GLSL DATs and callbacks no longer
+  overlap the next column. `/create`, `/duplicate` and `/insert` now flash the ops they make.
+
 ## v0.2.2 (2026-11-09)
 
 - The COMP viewer is now a rebrandable 16:13 SVG card with dynamic app and port rows, and
