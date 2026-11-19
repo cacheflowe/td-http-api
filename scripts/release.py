@@ -4,6 +4,7 @@
 		Refuses to run with uncommitted changes to tracked files: commit your work first. Then bump
 		VERSION in src/td_http_api.py, wait for TD to reload it, export the clean drop-in tox to
 		build/TdHttpApi-vX.Y.Z.tox (+ build/TdHttpApi.tox), re-save the dev tox (src/TdHttpApi.tox),
+		render the COMP's viewer card (new version) to docs/screenshot.png for the README,
 		turn CHANGELOG.md's "## Unreleased" section into "## vX.Y.Z (date)" and write its text to
 		build/release-notes-vX.Y.Z.md. Then commit just those files (RELEASE_FILES) as the release.
 
@@ -37,10 +38,16 @@ def fail(msg):
 	sys.exit(1)
 
 
-def call(port, path, method='GET', timeout=30):
-	req = urllib.request.Request(f'http://127.0.0.1:{port}{path}', data=b'' if method == 'POST' else None, method=method)
+def fetch(port, path, method='GET', body=None, timeout=30):
+	"""Raw response bytes. A POST always sends a body (TD's web server stalls ~60 s without one)."""
+	data = (body.encode('utf-8') if isinstance(body, str) else body) if body is not None else (b'' if method == 'POST' else None)
+	req = urllib.request.Request(f'http://127.0.0.1:{port}{path}', data=data, method=method)
 	with urllib.request.urlopen(req, timeout=timeout) as r:
-		return json.loads(r.read().decode('utf-8'))
+		return r.read()
+
+
+def call(port, path, method='GET', timeout=30, body=None):
+	return json.loads(fetch(port, path, method, body, timeout).decode('utf-8'))
 
 
 def find_bridge(port=None):
@@ -109,7 +116,24 @@ def changelog_release(new, write=True):
 	return notes
 
 
-RELEASE_FILES = ('CHANGELOG.md', 'src/td_http_api.py', 'src/TdHttpApi.tox')	# what prepare changes
+RELEASE_FILES = ('CHANGELOG.md', 'src/td_http_api.py', 'src/TdHttpApi.tox', 'docs/screenshot.png')	# what prepare changes
+SCREENSHOT = os.path.join(ROOT, 'docs', 'screenshot.png')
+
+
+def capture_card(port, info, comp):
+	"""Render the bridge COMP's viewer card, now showing the new version, to docs/screenshot.png
+	(the README image). The card is an SVG in a Web Render TOP, so redraw it, give the TOP a moment
+	to load the new SVG, then snapshot it."""
+	script = f"m = op('{info['callbacksDAT']}').module\nm.refresh_labels(op('{comp}'))\nprint('ok')\n"
+	res = call(port, '/run', 'POST', body=script)
+	if res.get('error'):
+		fail(f"couldn't redraw the viewer card: {res['error']}")
+	time.sleep(2)
+	png = fetch(port, f'/snapshot?path={comp}/SVG/out_SVG')
+	if not png.startswith(b'\x89PNG'):
+		fail(f'/snapshot of the viewer card did not return a PNG: {png[:200]!r}')
+	open(SCREENSHOT, 'wb').write(png)
+	print(f'[release] README image: {os.path.relpath(SCREENSHOT, ROOT)} ({len(png)} bytes)')
 
 
 def uncommitted():
@@ -145,6 +169,7 @@ def prepare(args):
 	print(f"[release] exported {res['output']} ({res['bytes']} bytes) + build/TdHttpApi.tox")
 	res = call(port, f'/save-external-tox?path={comp}', 'POST')
 	print(f"[release] re-saved dev tox {res.get('externaltox')} (via {res.get('via', 'saveExternalTox')})")
+	capture_card(port, info, comp)
 
 	notes = changelog_release(new)
 	notes_path = os.path.join(BUILD, f'release-notes-v{new}.md')

@@ -13,7 +13,7 @@ With `td-http-api.toe` open in TD, everything committed, and notes under **Unrel
 ```
 python scripts/release.py prepare patch       # bump, export build/TdHttpApi-vX.Y.Z.tox, roll the changelog
 # check build/TdHttpApi.tox in a sandbox COMP: /smoketest passes, /server-info shows the new version
-git commit -m "Release vX.Y.Z" -- CHANGELOG.md src/td_http_api.py src/TdHttpApi.tox
+git commit -m "Release vX.Y.Z" -- CHANGELOG.md src/td_http_api.py src/TdHttpApi.tox docs/screenshot.png
 git push origin main
 python scripts/release.py publish             # tag, push the tag, create the GitHub release
 ```
@@ -83,7 +83,10 @@ It:
 3. Calls `POST /export-release`, which writes `build/TdHttpApi-vX.Y.Z.tox`, and copies it to
    `build/TdHttpApi.tox`.
 4. Re-saves the dev tox, `src/TdHttpApi.tox`.
-5. Renames **Unreleased** to `## vX.Y.Z (date)`, adds a fresh empty **Unreleased** above it, and
+5. Redraws the bridge COMP's viewer card, which now shows the new version, and saves it as
+   `docs/screenshot.png`, the README image. It's the card on its own, without TD's node frame.
+   The card shows the dev bridge's label and port.
+6. Renames **Unreleased** to `## vX.Y.Z (date)`, adds a fresh empty **Unreleased** above it, and
    writes that section to `build/release-notes-vX.Y.Z.md`.
 
 For the first release, pass the current version: `python scripts/release.py prepare 0.1.0`.
@@ -106,7 +109,7 @@ free port), run the same checks there, then delete it.
 Commit only the files `prepare` changed (it warns if anything else changed while it ran):
 
 ```
-git commit -m "Release vX.Y.Z" -- CHANGELOG.md src/td_http_api.py src/TdHttpApi.tox
+git commit -m "Release vX.Y.Z" -- CHANGELOG.md src/td_http_api.py src/TdHttpApi.tox docs/screenshot.png
 git push origin main
 ```
 
