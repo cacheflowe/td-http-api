@@ -15,7 +15,7 @@ import shutil
 
 # The bridge's release version: shown in /server-info, MCP serverInfo, the Version par, release file
 # names. scripts/release.py bumps it; edit it nowhere else.
-VERSION = '0.2.2'
+VERSION = '0.3.0'
 
 # ---------------------------------------------------------------------------
 # Network description (self-contained - no td_util dependency, so this file
@@ -1585,6 +1585,16 @@ def _context_scan(refresh=False):
 	return roots, docs
 
 
+def _inside_a_bridge(o):
+	"""True if o lives inside any td-http-api bridge COMP (one with the Agent Prompt par)."""
+	p = o.parent()
+	while p is not None and p.path != '/':
+		if getattr(p.par, 'Agentprompt', None) is not None:
+			return True
+		p = p.parent()
+	return False
+
+
 def _context_dats(bridge):
 	"""README-style DATs inside the project (names like README, AGENTS, agent_notes, or tagged
 	'agentdoc'), outside the bridge itself. They travel with a COMP when it's reused as a tox."""
@@ -1597,6 +1607,8 @@ def _context_dats(bridge):
 				or _CONTEXT_DAT_TAGS & {t.lower() for t in o.tags})):
 			if d.path == bridge.path or d.path.startswith(bridge.path + '/') or d.isTable:
 				continue
+			if _inside_a_bridge(d):
+				continue	# another td-http-api bridge's own README, not project docs
 			text = d.text or ''
 			if not text.strip():
 				continue

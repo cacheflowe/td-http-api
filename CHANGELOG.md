@@ -6,9 +6,11 @@ heading and uses it for the GitHub release notes.
 
 ## Unreleased
 
+## v0.3.0 (2026-11-19)
+
 - **New: `/tidy` (MCP `td_tidy`), graph-aware layout for existing networks.**
   - Wired chains become left-to-right columns with fewer crossings and straightened wires, separate
-    chains stack, and unwired ops go into a grid. Network boxes are refit.
+    chains stack, and unwired ops go into rows by family. Network boxes are refit.
   - Each op keeps its satellites in rows below it, with room reserved so they don't overlap
     neighbours. Satellites are docked ops (a GLSL TOP's shader/info/compute DATs, a Ramp's keys)
     and unwired DATs tied to exactly one op by an OP parameter or `op()` expression.
