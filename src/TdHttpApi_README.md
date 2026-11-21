@@ -43,7 +43,8 @@ This tool is a work-in-progress, and the API is still evolving. If you have ques
 - **Run Python** — execute one-off scripts and capture output
 - **Move & organize** — reposition nodes, add comments, group with annotations
 - **Tidy layouts** — `/tidy` lays a network out left to right by data flow, keeps helper DATs
-  (GLSL shaders, callbacks, keys) under their ops, and never stacks a new node on top of another
+  (GLSL shaders, callbacks, keys) and materials under their ops, puts a scene's camera, lights and
+  Render TOP to the right of its geometry, and never stacks a new node on top of another
 - **Compare snapshots** — diff two network states to see exactly what changed
 
 ---

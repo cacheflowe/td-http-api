@@ -6,6 +6,13 @@ heading and uses it for the GitHub release notes.
 
 ## Unreleased
 
+- **`/tidy` groups 3D scenes.** A material used by one geometry sits under it (with its shader DATs).
+  A Render TOP and the geometry, camera and lights it names are laid out as one scene: geometry on
+  the left, then camera and lights, then the Render TOP. `renderRigs` in the response lists them.
+- **Agent docs: tidy first, always.** The skills, `/init` and the MCP instructions now say to
+  tidy every network you create and to start any layout cleanup with `/tidy`, not `/layout` or
+  hand-placed coordinates.
+
 ## v0.3.0 (2026-11-19)
 
 - **New: `/tidy` (MCP `td_tidy`), graph-aware layout for existing networks.**

@@ -1,3 +1,4 @@
+import fnmatch
 import glob
 import hashlib
 import io
@@ -2521,7 +2522,8 @@ _SCHEMA_OVERRIDES = {
 		},
 		'rules': ['Without paths, lays out every op in parent (default: the open network) except the bridge COMP.',
 			'With paths, lays out only those ops (and their satellites), anchored where they were; check overlaps[].',
-			'Satellites = docked ops plus unwired DATs tied to exactly one op by an OP parameter or op() expression.'],
+			'Satellites = docked ops plus unwired DATs and MATs tied to exactly one op by an OP parameter or op() expression (a material sits under its geometry).',
+			'A Render TOP, the geometry it renders and its camera and lights are laid out as one scene: geometry left, then camera and lights, then the Render TOP (renderRigs[]).'],
 		'response': {'type': 'object', 'shape': {'parent': 'string', 'scope': 'string', 'ops': 'integer',
 			'groups': 'integer', 'loose': 'integer', 'crossings': 'object', 'satellites': 'object',
 			'moved': 'integer', 'nodes': 'array', 'overlaps': 'array'}},
@@ -3993,7 +3995,9 @@ def _route_layout(request, response, pars, webServerDAT=None, **_):
 # Unlike TD's Shift+L, each op is laid out together with its satellites: docked ops (a GLSL
 # TOP's shader DATs, a Ramp's keys) and unwired DATs that belong to exactly one op through an OP
 # parameter or op() expression (a Script CHOP's callbacks DAT, a CHOP Execute watching one CHOP).
-# Satellites sit in rows under their host, and the spacing makes room for them.
+# Satellites sit in rows under their host, and the spacing makes room for them. A material used by
+# one geometry is a satellite too. A Render TOP and the geometry, camera and lights it names are
+# joined by layout-only edges (_tidy_rig_edges), so the rig lands right of the geometry.
 
 _TIDY_GAP_X = 60
 _TIDY_GAP_Y = 30
@@ -4015,7 +4019,9 @@ def _tidy_satellites(parent, skip):
 		host = getattr(n, 'dock', None)
 		if host is not None and host in inset:
 			sat_of[n] = host
-	candidates = {n for n in children if n.isDAT and n not in sat_of and not any(n.inputs) and not n.outputs}
+	# unwired DATs, and materials: a material sits under the one geometry that uses it
+	candidates = {n for n in children if (n.isDAT or n.family == 'MAT') and n not in sat_of
+		and not any(n.inputs) and not n.outputs}
 	partners = {n: set() for n in candidates}
 	owns = set()
 	for n in children:
@@ -4047,6 +4053,51 @@ def _tidy_satellites(parent, skip):
 		if h not in sat_of and h != s:
 			flat[s] = h
 	return flat
+
+
+_TIDY_RIG_PARS = (('geometry', 'geometryCOMP'), ('camera', 'cameraCOMP'), ('lights', 'lightCOMP'))
+
+
+def _tidy_render_refs(top, parname, optype):
+	"""Ops of `optype` that a Render TOP's `parname` names: space-separated names, wildcards or paths."""
+	pars = top.pars(parname)
+	if not pars:
+		return []
+	val = pars[0].eval()
+	found = []
+	for v in (val if isinstance(val, (list, tuple)) else [val]):
+		if hasattr(v, 'OPType'):	# OP parameters evaluate to ops
+			found.append(v)
+		elif isinstance(v, str):	# a name, wildcard or path pattern
+			for tok in v.split():
+				if tok.startswith('/'):
+					o = op(tok)
+					found.extend([o] if o is not None else [])
+				else:
+					found.extend(c for c in top.parent().children if fnmatch.fnmatchcase(c.name, tok))
+	return [o for o in found if o.OPType == optype]
+
+
+def _tidy_rig_edges(hosts):
+	"""Layout-only edges (not wires) that make a 3D scene read left to right: geometry, then its
+	camera and lights, then the Render TOP. The rig (camera, lights, Render TOP) lands to the right of
+	the geometry, with each material already under its geometry as a satellite. Returns
+	(edges, rigs) with rigs = {render path: [member names]}."""
+	host_set = set(hosts)
+	edges, rigs = set(), {}
+	for r in hosts:
+		if r.OPType != 'renderTOP':
+			continue
+		geos, cams, lights = ([o for o in _tidy_render_refs(r, p, t) if o in host_set] for p, t in _TIDY_RIG_PARS)
+		rig = cams + [l for l in lights if l not in cams]
+		for g in geos:
+			for c in rig or [r]:
+				edges.add((g, c))
+		for c in rig:
+			edges.add((c, r))
+		if geos or rig:
+			rigs[r.path] = [o.name for o in geos + rig]
+	return {e for e in edges if e[0] != e[1]}, rigs
 
 
 def _tidy_footprint(host, sats, sat_cols, gap):
@@ -4519,6 +4570,8 @@ def _tidy_run(parent, listed, skip, opts, dry=False, strict=False, anchor=None, 
 				src = canon.get(sat_of.get(link.owner, link.owner))
 				if src is not None and dst is not None and src != dst:
 					edges.add((src, dst))
+	rig_edges, rigs = _tidy_rig_edges(hosts)
+	edges |= rig_edges
 
 	# Network boxes: a box holding ops keeps them in one group and is refit around them (in a
 	# scoped tidy, only boxes whose ops are all being tidied). A box holding no ops is a note: it
@@ -4570,6 +4623,7 @@ def _tidy_run(parent, listed, skip, opts, dry=False, strict=False, anchor=None, 
 		'loops': stats['loops'],
 		'crossings': {'before': stats['crossingsBefore'], 'after': stats['crossingsAfter']},
 		'satellites': {h.path: [s.name for s in sats[h]] for h in hosts if sats[h]},
+		'renderRigs': rigs,
 		'moved': len(moved),
 		'nodes': [{'path': m[0].path, 'x': m[1], 'y': m[2], **({'w': m[3], 'h': m[4]} if len(m) == 5 else {})}
 			for m in sorted(moved, key=lambda m: m[0].path)],
@@ -5307,7 +5361,8 @@ def init_prompt_text(comp, port):
 
 
 _LAYOUT_MODE_NOTES = {
-	'agent': ('Layout Mode: **Agent Tidies**. After you create, wire or move ops, run `/tidy` on that network '
+	'agent': ('Layout Mode: **Agent Tidies**. Run `/tidy` on every network you create, and after you wire or '
+		'move ops; start any layout cleanup with it before placing anything by hand '
 		'(scope it with `paths=` where the developer arranged things by hand).'),
 	'auto': ('Layout Mode: **Auto Tidy After Edits**. The bridge tidies each network you create or wire ops in '
 		'(`autoTidy` in the response), so you don\'t need to call `/tidy` after those.'),
@@ -5566,7 +5621,7 @@ td-http-api bridge. Every td_* tool is one bridge route; arguments become its qu
 
 - Look before you change: td_network (one COMP; recursive=true for subtrees), td_errors, td_par / td_pars,
   td_custompars, td_dat, td_snapshot + td_job (images), td_sample (pixel stats), td_chop.
-- {layout_note} td_tidy keeps helper DATs under their ops; prefer it over td_layout.
+- {layout_note} td_tidy keeps helper DATs and materials under their ops and puts a scene's camera, lights and Render TOP right of its geometry; always use it before td_layout or hand placement.
 - This project's own agent docs (instructions, skills, rules, README DATs): {context_note}
 - Build with td_build (ops + params + connections + auto layout in one call; safe to retry). Set many
   parameters with td_par body {{"set": {{"<path>": {{"<par>": value}}}}}}. Edit code with td_dat mode=edit

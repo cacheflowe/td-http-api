@@ -94,3 +94,14 @@ Full user guide: [src/TdHttpApi_README.md](src/TdHttpApi_README.md). Agent/route
 Open `td-http-api.toe`. The bridge COMP's DATs are file-synced to `src/` and `skills/`, so edits go live
 immediately. See [CLAUDE.md](CLAUDE.md) for the workflow and checks. Releases: see
 [docs/RELEASING.md](docs/RELEASING.md).
+
+## Other MCP servers for TouchDesigner
+
+- **[TDMCP](https://github.com/TouchDesigner/TDMCP)** is Derivative's official MCP server (compared
+  above). TdHttpApi has borrowed some of its ideas.
+- **[touchdesigner-mcp](https://github.com/8beeeaaat/touchdesigner-mcp)** (MIT) is a Node MCP server
+  that talks to a WebServer DAT component in your project. It ships as a Claude Code / Codex plugin
+  with workflow skills (debug, perf, overview, snapshot, launch) and hooks.
+- **[twozero](https://twozero.ai/docs/mcp)** is a paid MCP integration for TouchDesigner.
+- **[Embody](https://embody.tools/)** is a larger toolkit that externalizes TD networks to diffable
+  files and includes its own agent bridge.
