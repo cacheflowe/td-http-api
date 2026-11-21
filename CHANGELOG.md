@@ -6,6 +6,8 @@ heading and uses it for the GitHub release notes.
 
 ## Unreleased
 
+## v0.4.0 (2026-11-21)
+
 - **`/tidy` groups 3D scenes.** A material used by one geometry sits under it (with its shader DATs).
   A Render TOP and the geometry, camera and lights it names are laid out as one scene: geometry on
   the left, then camera and lights, then the Render TOP. `renderRigs` in the response lists them.
