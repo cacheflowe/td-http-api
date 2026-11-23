@@ -6,6 +6,8 @@ heading and uses it for the GitHub release notes.
 
 ## Unreleased
 
+## v0.5.0 (2026-11-23)
+
 - **Lower token use, same capability.**
   - `/network` nodes are compact by default (path, type, position, comment, `pars` of non-default
     values with strings over 120 chars cut, expressions as `{mode, expr}`). `detail=full` gives the
@@ -23,6 +25,7 @@ heading and uses it for the GitHub release notes.
     otherwise it returns counts, overlaps and `nodesOmitted`.
   - The core skill has a token-habits checklist item (filter output, trust write responses, prefer
     numbers over images).
+
 ## v0.4.0 (2026-11-21)
 
 - **`/tidy` groups 3D scenes.** A material used by one geometry sits under it (with its shader DATs).
