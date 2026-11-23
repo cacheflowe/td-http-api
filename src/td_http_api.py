@@ -708,13 +708,13 @@ def _ok_json(response, data):
 	response['statusCode'] = 200
 	response['statusReason'] = 'OK'
 	response['content-type'] = 'application/json'
-	response['data'] = json.dumps(data)
+	response['data'] = json.dumps(data, separators=(',', ':'))
 
 def _ok_json_sorted(response, data):
 	response['statusCode'] = 200
 	response['statusReason'] = 'OK'
 	response['content-type'] = 'application/json'
-	response['data'] = json.dumps(data, sort_keys=True, indent=2)
+	response['data'] = json.dumps(data, sort_keys=True, separators=(',', ':'))
 
 def _ok_text(response, text):
 	response['statusCode'] = 200
@@ -723,11 +723,44 @@ def _ok_text(response, text):
 	response['data'] = text
 
 
+_COMPACT_STR = 120	# longest string value /network shows before cutting it
+
+
+def _compact_value(v):
+	if isinstance(v, str) and len(v) > _COMPACT_STR:
+		return f'{v[:_COMPACT_STR]}...(+{len(v) - _COMPACT_STR} chars)'
+	return v
+
+
+def _compact_node(n):
+	"""A node entry without what its path or type already say or the agent rarely needs:
+	name/family (from path/opType) and size (/bounds, fields=, detail=full). Non-default pars become
+	{par: value} with long strings cut; a par that isn't a plain constant is {mode, expr?} instead,
+	and its evaluated value is left out (read it with /par)."""
+	out = {k: n[k] for k in ('path', 'opType', 'nodeX', 'nodeY', 'comment', 'enclosedOPs') if k in n}
+	pars = {}
+	for name, p in (n.get('customPars') or {}).items():
+		if p.get('mode') == 'CONSTANT':
+			pars[name] = _compact_value(p.get('value'))
+		else:
+			e = {'mode': p.get('mode')}
+			if 'expr' in p:
+				e['expr'] = _compact_value(p['expr'])
+			else:
+				e['value'] = _compact_value(p.get('value'))
+			pars[name] = e
+	if pars:
+		out['pars'] = pars
+	return out
+
+
 def _route_network(request, response, pars, **_):
 	"""Nodes, wires, references and non-default pars of a COMP (default: the network open in the
-	editor). recursive=true walks the subtree. limit/offset page the nodes (default limit 300),
-	fields=name,opType,... trims node entries, overlaps=true lists overlapping node pairs,
-	graph=true adds a topological order and cycle check over the wires."""
+	editor). recursive=true walks the subtree. limit/offset page the nodes (default limit 300).
+	Nodes are compact by default (path, opType, position, `pars` of non-default values with long
+	strings cut); detail=full gives every node the full entry (name, family, size, customPars with
+	mode/value/expr). fields=name,opType,... picks entries from the full shape. overlaps=true lists
+	overlapping node pairs, graph=true adds a topological order and cycle check over the wires."""
 	comp = _resolve_comp(pars)
 	recursive = _bool_param(pars, 'recursive')
 	data = describe_network(comp, recursive)
@@ -747,6 +780,8 @@ def _route_network(request, response, pars, **_):
 	if fields:
 		keep = {'path'} | {f.strip() for f in fields.split(',')}
 		data['nodes'] = [{k: v for k, v in n.items() if k in keep} for n in data['nodes']]
+	elif _first_param(pars, 'detail', 'compact') != 'full':
+		data['nodes'] = [_compact_node(n) for n in data['nodes']]
 	if _bool_param(pars, 'overlaps'):
 		data['overlaps'] = _overlapping_pairs(comp or _get_current_network())
 	if _bool_param(pars, 'graph'):
@@ -1059,11 +1094,13 @@ You are connected to a live TouchDesigner project over its HTTP bridge (this ser
 
 ## Getting Started (Recommended Order)
 
-1. **Read the Operating Guide:**
+1. **Read the core guide (short):**
    ```
-   GET http://127.0.0.1:{port}/docs
+   GET http://127.0.0.1:{port}/docs?name=td-http-api
    ```
-   Covers the full HTTP route reference, client-side workflow lessons, and how to work idiomatically with this bridge.
+   The rules and habits that keep the project safe. For detail, fetch one section of the reference
+   (`/docs?name=td-http-api-reference&toc=true` lists them, `&section=<id>` returns one). Don't fetch
+   plain `/docs`: it returns every doc at once (150 KB+).
 
 2. **Inspect the Current Network:**
    ```
@@ -1098,7 +1135,7 @@ You are connected to a live TouchDesigner project over its HTTP bridge (this ser
 - **Health Status:** `GET /health`
 - **Request Logs:** `GET /logs`
 - **Network Mermaid Diagram:** `GET /network.mmd`
-- **Run Arbitrary Python:** `POST /run` (advanced; read `/docs` first)
+- **Run Arbitrary Python:** `POST /run` (advanced; read the `/docs?name=td-http-api` core first)
 - **MCP:** the same routes as `td_*` tools at `POST /mcp`
 
 Errors are JSON `{{error, code, ...}}` and usually carry `suggestions` or `validValues`. Every change
@@ -1106,7 +1143,7 @@ is one named undo step for the user.
 
 ---
 
-**Pro Tip:** Start with `/docs`. It has everything you need to work effectively. Don't skip it.
+**Pro Tip:** Start with `/docs?name=td-http-api`, then fetch reference sections as you need them.
 """
 	_ok_text(response, onboarding)
 
@@ -1327,20 +1364,47 @@ def _route_smoketest(request, response, pars, webServerDAT, **_):
 _DOCS_PREAMBLE = """# TD HTTP API - Agent Onboarding
 
 You are connected to a live TouchDesigner project over its HTTP bridge (this server, port {port}).
-Everything below is the operating documentation for working with it - read all of it before making
-any changes to the project. It covers the full HTTP route reference, client-side workflow lessons,
-and idiomatic TouchDesigner network-building technique.
+Below is the operating documentation for working with it: the HTTP route reference, client-side
+workflow lessons, and idiomatic TouchDesigner network-building technique. Read the checklist and
+the parts that match your task, not everything: each doc can be fetched on its own, by section.
 
 Included docs (in order below): {names}
 
 Fetch a single doc instead of all of them with `GET /docs?name=<docname>` (e.g. `td-http-api`; the
-`docs_skill_` prefix is optional), or list available doc names with `GET /docs?list=true`.
+`docs_skill_` prefix is optional), or list available doc names with `GET /docs?list=true`. For one
+doc, `&toc=true` returns its outline with section sizes and `&section=<id>` returns just that section.
 
 For a live, code-accurate reference of every route this server currently supports (method + one-line
 summary, generated straight from the running handlers rather than this prose), see `GET /routes`.
 For a machine-readable contract of route methods/params/examples that agents can validate against,
 see `GET /schema`.
 """
+
+
+def _doc_outline(text):
+	"""[{id, level, heading, start, end, bytes}] for each markdown heading outside code fences.
+	A section runs to the next heading of the same or a higher level (so it includes its subsections)."""
+	lines = text.split('\n')
+	heads, fence = [], False
+	for i, line in enumerate(lines):
+		if line.lstrip().startswith('```'):
+			fence = not fence
+		m = None if fence else re.match(r'(#{1,6})\s+(.+?)\s*#*\s*$', line)
+		if m:
+			heads.append({'level': len(m.group(1)), 'heading': m.group(2), 'start': i})
+	seen = {}
+	for h, nxt in zip(heads, heads[1:] + [None]):
+		end = len(lines)
+		for later in heads:
+			if later['start'] > h['start'] and later['level'] <= h['level']:
+				end = later['start']
+				break
+		slug = re.sub(r'[^a-z0-9]+', '-', h['heading'].lower()).strip('-') or 'section'
+		seen[slug] = seen.get(slug, 0) + 1
+		h['id'] = slug if seen[slug] == 1 else f'{slug}-{seen[slug]}'
+		h['end'] = end
+		h['bytes'] = len('\n'.join(lines[h['start']:end]))
+	return heads, lines
 
 
 def _route_docs(request, response, pars, webServerDAT, **_):
@@ -1381,6 +1445,21 @@ def _route_docs(request, response, pars, webServerDAT, **_):
 			port=webServerDAT.par.port.eval(),
 			names=', '.join(n.name for n in all_docs),
 		))
+	toc, want = _bool_param(pars, 'toc'), _first_param(pars, 'section')
+	if (toc or want) and len(docs_to_serve) == 1:
+		n = docs_to_serve[0]
+		heads, lines = _doc_outline(n.csv if n.isTable else n.text)
+		if toc:
+			_ok_json(response, {'doc': n.name, 'bytes': sum(len(l) + 1 for l in lines), 'sections': [
+				{'id': h['id'], 'level': h['level'], 'heading': h['heading'], 'bytes': h['bytes']} for h in heads]})
+			return
+		key = re.sub(r'[^a-z0-9]+', '-', want.lower()).strip('-')
+		hit = next((h for h in heads if h['id'] == key), None) or next((h for h in heads if key and key in h['id']), None)
+		if hit is None:
+			raise BridgeError(f"no section '{want}' in {n.name}", code='section_not_found',
+				suggestions=_suggest(key, [h['id'] for h in heads]) or None, toc=f'/docs?name={name_filter}&toc=true')
+		_ok_text(response, '\n'.join(lines[hit['start']:hit['end']]))
+		return
 	for n in docs_to_serve:
 		text = n.csv if n.isTable else n.text
 		sections.append(f"<!-- ===== {n.name} ===== -->\n\n{text}")
@@ -1658,12 +1737,20 @@ def context_summary(bridge, limit=25):
 	return '\n'.join(lines)
 
 
+def _short(text, n):
+	"""text cut at a word boundary within n characters, with an ellipsis when it was cut."""
+	text = ' '.join(str(text).split())
+	if len(text) <= n:
+		return text
+	return text[:n].rsplit(' ', 1)[0].rstrip(' ,;:-') + '...'
+
+
 def _route_context(request, response, pars, webServerDAT, **_):
 	"""This project's own agent docs: instruction files, skills, rules and prompts in every common
 	harness's layout (AGENTS.md, CLAUDE.md, .claude/skills, .cursor/rules, .github/copilot-
 	instructions.md, .windsurf, .clinerules, .kiro, GEMINI.md, ...) found in the TD project folder or
 	up to its repo root, plus a fuzzy pass over folders named skills/rules/prompts, plus README-style
-	DATs inside the .toe. No args: the index (name, kind, harness, path, description). name= or
+	DATs inside the .toe. No args: the index (name, kind, harness, path, short description; full=true keeps whole descriptions). name= or
 	path= returns one doc's text. Read the ones relevant to your task; skip any your harness already
 	loaded. Project docs take precedence over the bridge's generic guidance."""
 	bridge = webServerDAT.parent()
@@ -1671,7 +1758,11 @@ def _route_context(request, response, pars, webServerDAT, **_):
 	path = _first_param(pars, 'path')
 	idx = _context_index(bridge, refresh=_bool_param(pars, 'refresh'))
 	if not name and not path:
-		_ok_json(response, idx)
+		if _bool_param(pars, 'full'):
+			_ok_json(response, idx)
+		else:	# the index only has to tell docs apart: short descriptions, no matchedBy
+			cut = lambda d: {k: (_short(v, 110) if k == 'description' else v) for k, v in d.items() if k != 'matchedBy'}
+			_ok_json(response, {**idx, 'docs': [cut(d) for d in idx['docs']], 'dats': [cut(d) for d in idx['dats']]})
 		return
 	entries = idx['docs'] + idx['dats']
 	if path:
@@ -1774,7 +1865,7 @@ def _route_examples(request, response, pars, **_):
 	header, records, source = _snippets_catalog()
 	records = _filter_examples_records(records, pars)
 	offset = int(_first_param(pars, 'offset', '0'))
-	limit = int(_first_param(pars, 'limit', '50'))
+	limit = int(_first_param(pars, 'limit', '20'))
 	if offset < 0:
 		offset = 0
 	if limit < 1:
@@ -1782,9 +1873,10 @@ def _route_examples(request, response, pars, **_):
 	if limit > 500:
 		limit = 500
 	paged = records[offset:offset + limit]
+	if not _bool_param(pars, 'fulltext'):	# rows are for picking; fulltext=true (or /examples.tsv) has the whole text
+		paged = [{**r, 'text': _short(r.get('text', ''), 140)} for r in paged]
 	_ok_json(response, {
 		'source': source,
-		'cacheFile': _snippets_cache_path(),
 		'tdBuild': app.build,
 		'columns': header,
 		'total': len(records),
@@ -2519,8 +2611,10 @@ _SCHEMA_OVERRIDES = {
 			'gridLoose': {'type': 'boolean', 'required': False, 'default': True},
 			'annotations': {'type': 'boolean', 'required': False, 'default': True},
 			'home': {'type': 'boolean', 'required': False, 'default': False},
+			'nodes': {'type': 'boolean', 'required': False, 'default': False},
 		},
-		'rules': ['Without paths, lays out every op in parent (default: the open network) except the bridge COMP.',
+		'rules': ['nodes=true lists every moved op with its position (otherwise only when 12 or fewer moved).',
+			'Without paths, lays out every op in parent (default: the open network) except the bridge COMP.',
 			'With paths, lays out only those ops (and their satellites), anchored where they were; check overlaps[].',
 			'Satellites = docked ops plus unwired DATs and MATs tied to exactly one op by an OP parameter or op() expression (a material sits under its geometry).',
 			'A Render TOP, the geometry it renders and its camera and lights are laid out as one scene: geometry left, then camera and lights, then the Render TOP (renderRigs[]).'],
@@ -2690,12 +2784,20 @@ def _route_schema(request, response, pars, webServerDAT, **_):
 	Designed for agent self-configuration and preflight validation so calls are correct on first try."""
 	route_filter = _first_param(pars, 'route')
 	include_examples = _bool_param(pars, 'examples', True)
+	# No route and no examples flag: a compact index (summary + query par names per route).
+	# route=/x gives that route's full spec; examples=true|false gives every route's.
+	compact = not route_filter and _first_param(pars, 'examples') is None
 	routes = {}
 	for uri, fn in sorted(_ROUTES.items()):
 		if route_filter and uri != route_filter:
 			continue
 		doc = inspect.getdoc(fn)
 		summary = doc.splitlines()[0] if doc else ''
+		if compact:
+			override = _SCHEMA_OVERRIDES.get(uri) or {}
+			routes[uri] = {'methods': _infer_methods(uri, fn), 'summary': _short(summary, 100),
+				**({'query': sorted(override['query'])} if override.get('query') else {})}
+			continue
 		entry = {
 			'methods': _infer_methods(uri, fn),
 			'summary': summary,
@@ -2728,6 +2830,8 @@ def _route_schema(request, response, pars, webServerDAT, **_):
 			'routeFilterQuery': 'route=/wire',
 			'includeExamplesQuery': 'examples=true|false',
 		},
+		**({'note': 'Compact index. /schema?route=/tidy gives one route\'s full spec (params, rules, examples); '
+			'/schema?examples=true gives every route\'s.'} if compact else {}),
 		'routes': routes,
 	})
 
@@ -3999,6 +4103,7 @@ def _route_layout(request, response, pars, webServerDAT=None, **_):
 # one geometry is a satellite too. A Render TOP and the geometry, camera and lights it names are
 # joined by layout-only edges (_tidy_rig_edges), so the rig lands right of the geometry.
 
+_TIDY_LIST_MAX = 12	# /tidy lists moved ops (with positions) only up to this many, unless nodes=true
 _TIDY_GAP_X = 60
 _TIDY_GAP_Y = 30
 _TIDY_SAT_GAP = 30	# TD's own docking gap: docked DATs sit 120 below a 90-high host, 160 apart
@@ -4654,6 +4759,10 @@ def _route_tidy(request, response, pars, webServerDAT, **_):
 	if stray:
 		raise BridgeError(f'paths must all be children of {parent.path}', code='mixed_parents', paths=stray)
 	result = _tidy_run(parent, listed, {webServerDAT.parent()}, _tidy_opts(pars), dry=dry)	# the bridge never moves
+	if not dry and len(result['nodes']) > _TIDY_LIST_MAX and not _bool_param(pars, 'nodes'):
+		# after a tidy the agent needs the counts and overlaps, not every new coordinate
+		result['nodesOmitted'] = len(result.pop('nodes'))
+		result['hint'] = 'nodes=true lists every moved op with its new position; GET /bounds has positions too'
 	if not dry and _bool_param(pars, 'home'):
 		pane = _get_network_editor_pane()
 		if pane is not None and pane.owner == parent:

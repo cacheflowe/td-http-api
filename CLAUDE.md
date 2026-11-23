@@ -5,7 +5,7 @@ COMP that gives AI agents read/write access to a live TD project. It offers REST
 endpoint (`/mcp`), and a dashboard (`/ui`). It moved here from haxlib in November 2026. haxlib (and
 any other project) consumes the packaged `.tox`.
 
-Read **[skills/td-http-api.md](skills/td-http-api.md)** before changing anything. It's the full route
+Read **[skills/td-http-api.md](skills/td-http-api.md)** (the short core) before changing anything, and the sections of **[skills/td-http-api-reference.md](skills/td-http-api-reference.md)** that match your task. Together they are the full route
 reference and the record of what was learned building it. The roadmap is `TODO_http_bridge.md`: a local,
 gitignored file that may not exist in your checkout.
 
@@ -17,7 +17,7 @@ gitignored file that may not exist in your checkout.
 | `src/TdHttpApi.tox` | The dev tox (file paths still set). Re-saved on every project save (Save Tox With Project), or with `/save-external-tox?path=/project1/TdHttpApi` |
 | `src/TdHttpApi_dashboard.html` | The `/ui` dashboard (vanilla JS, no external resources) |
 | `src/TdHttpApi_README.md` | The user-facing README embedded in the tox |
-| `skills/` | Agent docs embedded in the tox and served at `/docs`: `td-http-api.md`, `td-network-craft.md`, `td-common-mistakes.md`, `td-process-testing.md` (restarting TD, fresh-process tests; the agent writes its own launcher per platform); `td-agent-init.md` is the prompt served at `/init` |
+| `skills/` | Agent docs embedded in the tox and served at `/docs`: `td-http-api.md` (short core), `td-http-api-reference.md` (full reference, fetched by section), `td-network-craft.md`, `td-common-mistakes.md`, `td-process-testing.md` (restarting TD, fresh-process tests; the agent writes its own launcher per platform); `td-agent-init.md` is the prompt served at `/init` |
 | `scripts/release.py` | Release: bump `VERSION`, export `build/TdHttpApi-vX.Y.Z.tox`, roll the changelog, tag + `gh release` |
 | `CHANGELOG.md` | Add notes under **Unreleased** as you change things |
 | `docs/RELEASING.md` | The release process, local and GitHub |
@@ -44,7 +44,7 @@ gitignored file that may not exist in your checkout.
   - Never call `ui.undo.undo()`.
   - Never open `ui.undo.startBlock(..., enable=False)` from a deferred `run()`.
   - Don't toggle `ui.undo.globalState`.
-- **After changing behaviour**, update `skills/td-http-api.md` (route tables and prose), the README, the
+- **After changing behaviour**, update `skills/td-http-api-reference.md` (route tables and prose; the core only changes for rules every agent needs), the README, the
   TODO and `CHANGELOG.md` (Unreleased). Then re-save the dev tox so its embedded copies match.
 - **Nothing machine-specific gets committed or embedded.** Anything read from the local TD install
   (the OP Snippets catalog, later the `/help` docs index) is built on first use and cached per TD

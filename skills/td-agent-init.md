@@ -11,10 +11,10 @@ We're collaborating on a **live TouchDesigner project** over the td-http-api HTT
 
 If your project has agent skills available, read and follow these:
 
-- **`td-http-api`** — comprehensive guide to the HTTP bridge, friction points, and best practices.
+- **`td-http-api`** — the short core guide: safety rules, habits, and which section of the reference to read for a task. The long reference is `td-http-api-reference`; read only the sections you need (`/docs?name=td-http-api-reference&toc=true`, then `&section=<id>`).
 - **`td-network-craft`** — idiomatic TD network-building technique and patterns.
 
-**If no skills are available in the active harness**, the skills are available through the HTTP API itself, which is fully self-contained and documented at `http://127.0.0.1:3031/docs` — you can work entirely through that.
+**If no skills are available in the active harness**, the skills are available through the HTTP API itself, which is fully self-contained and documented at `http://127.0.0.1:3031/docs?name=td-http-api` (core) and `...?name=td-http-api-reference&section=<id>`. Don't fetch plain `/docs`, which returns every doc at once.
 
 ## 2. TouchDesigner docs: `/help`
 
@@ -66,7 +66,7 @@ restart, or to test something in a throwaway TD process, see the **`td-process-t
 
 ## What you can do through the API
 
-(Full route reference is in the `td-http-api` skill.)
+(The route reference is in `td-http-api-reference`; `GET /routes` is the live list.)
 
 - **Inspect:** `/network` (`limit`, `fields`, `graph=true`, `overlaps=true`), `/project` (panes, fps), `/bounds`, `/health`, `/logs`
 - **See output:**

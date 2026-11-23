@@ -6,6 +6,23 @@ heading and uses it for the GitHub release notes.
 
 ## Unreleased
 
+- **Lower token use, same capability.**
+  - `/network` nodes are compact by default (path, type, position, comment, `pars` of non-default
+    values with strings over 120 chars cut, expressions as `{mode, expr}`). `detail=full` gives the
+    old entry. An 18-op COMP went from 23 KB to 8 KB. Responses are no longer pretty-printed.
+  - The `td-http-api` skill is now a short core (~8 KB: checklist, undo, error contract, and a
+    guide to what to read when). The rest moved, unchanged, to `td-http-api-reference`.
+  - `/docs?name=<doc>&toc=true` lists a doc's sections with sizes and `&section=<id>` returns one.
+    `/init` and the docs preamble no longer send agents to plain `/docs` (every doc, 150 KB+).
+  - `/context` index descriptions are shortened (`full=true` for the whole text).
+  - `/examples` defaults to 20 rows with text cut to 140 chars (`fulltext=true`, or `/examples.tsv`,
+    for the whole text), 25 KB down to 5 KB.
+  - `/schema` with no arguments is a compact index (21 KB to 7 KB); `?route=/x` is one route's full
+    spec and `?examples=true` is every route's.
+  - `/tidy` lists moved ops with positions only when 12 or fewer moved (`nodes=true` for all);
+    otherwise it returns counts, overlaps and `nodesOmitted`.
+  - The core skill has a token-habits checklist item (filter output, trust write responses, prefer
+    numbers over images).
 ## v0.4.0 (2026-11-21)
 
 - **`/tidy` groups 3D scenes.** A material used by one geometry sits under it (with its shader DATs).
